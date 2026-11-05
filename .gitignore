@@ -1,0 +1,24 @@
+# Python and local runtime artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local runtime evidence, screenshots and logs
+research/apple-music/evidence/
+research/apple-music/work/
+research/apple-music/*.json
+
+# Local tooling and editor files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Build/package outputs
+build/
+dist/
+*.egg-info/
+
+# Local secrets/configuration
+.env
+.env.*

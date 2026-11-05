@@ -1,0 +1,8 @@
+[project]
+name = "apple-music-desktop-lyrics"
+version = "0.1.0"
+description = "Safe, modular desktop lyrics prototype for Apple Music on Windows"
+requires-python = ">=3.10"
+
+[tool.apple-music]
+adapter-mode = "observation-only"
