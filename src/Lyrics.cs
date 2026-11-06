@@ -40,8 +40,9 @@ namespace AMLyrics {
   }
  }
  public sealed class LyricTiming {
+  public const double DefaultLeadSeconds = 1.5;
   readonly Dictionary<string,double> offsets = new Dictionary<string,double>();
-  public double Read(string key) { double value; return offsets.TryGetValue(key, out value) ? value : 0; }
+  public double Read(string key) { double value; return offsets.TryGetValue(key, out value) ? value : DefaultLeadSeconds; }
   public double Adjust(string key, double delta) {
    double value = Math.Round(Math.Max(-5, Math.Min(5, Read(key) + delta)), 1);
    offsets[key] = value; return value;

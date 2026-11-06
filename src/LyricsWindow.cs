@@ -124,7 +124,7 @@ namespace AMLyrics {
    earlier.Click += (s,e) => ChangeTiming(0.2, false);
    var later = new MenuItem { Header = "歌词延后 0.2 秒（歌词偏快时）" };
    later.Click += (s,e) => ChangeTiming(-0.2, false);
-   var reset = new MenuItem { Header = "恢复当前歌曲默认时间" };
+   var reset = new MenuItem { Header = "恢复默认（提前 1.5 秒）" };
    reset.Click += (s,e) => ChangeTiming(0, true);
    timingMenu.Items.Add(earlier); timingMenu.Items.Add(later); timingMenu.Items.Add(new Separator()); timingMenu.Items.Add(reset);
    timingMenu.PlacementTarget = timingButton; timingButton.ContextMenu = timingMenu;

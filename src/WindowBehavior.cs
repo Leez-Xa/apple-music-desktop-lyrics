@@ -129,11 +129,11 @@ namespace AMLyrics {
    Width = 440; Height = 150; UpdateLayout(); SavePreview(Path.Combine(folder, "lyrics-compact-preview.png"));
    check(((FrameworkElement)Content).ActualWidth > 0 && import.ActualWidth >= 30 && import.IsVisible, "Window: minimum-size layout and import control");
    ResizeLyrics(-100); check(current.FontSize == 16, "Window: minimum font size");
-   fake.Sample.Track.IsPlaying = false; fake.Sample.Track.PositionSeconds = 19.9;
+   fake.Sample.Track.IsPlaying = false; fake.Sample.Track.PositionSeconds = 18.4;
    ChangeTiming(0.2, false);
    check(displayedLineIndex == 2 && timingButton.Content.ToString().Contains("提前"), "Window: positive calibration advances the timed line");
    ChangeTiming(0, true);
-   check(displayedLineIndex == 1 && timingButton.Content.ToString() == "校时", "Window: reset restores original line timing");
+   check(displayedLineIndex == 1 && timing.Read(fake.Sample.Track.Key) == 1.5 && timingButton.Content.ToString().Contains("1.5"), "Window: reset restores the 1.5-second default advance");
    fake.Sample.TimelineReliable = false; Refresh(); check(current.Text == "时间轴不可用", "Window: missing timeline state");
    fake.Sample.TimelineReliable = true; fake.Sample.Track.IsPlaying = false; Refresh(); check(status.Text == "已暂停", "Window: paused state");
    local.Assign(fake.Sample.Track.Key, LrcParser.Parse("没有时间戳的中文歌词\n第二行完整可读", "文本测试"));
