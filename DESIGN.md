@@ -1,0 +1,2 @@
+# Desktop lyric design
+Native WPF floating tool window. Near-black background, high-contrast white current line, subdued next line, Segoe UI/Microsoft YaHei fallback. Two readable lines, compact song/source status, drag surface, font-size controls, hide and exit actions. Minimum 440 x 150 device-independent pixels. No fabricated progress, no fake synchronized plain text. Dark roles are neutral OKLCH colors, mapped to sRGB for WPF; accent is restrained rose. Windows accessibility names and keyboard shortcuts accompany controls.

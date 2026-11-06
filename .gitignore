@@ -1,0 +1,11 @@
+# Generated builds, captures and downloaded lyric content
+outputs/
+work/
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.log
+.env
+.env.*
