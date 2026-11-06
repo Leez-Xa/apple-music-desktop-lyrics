@@ -39,6 +39,19 @@ namespace AMLyrics {
    return found;
   }
  }
+ public sealed class LyricTiming {
+  readonly Dictionary<string,double> offsets = new Dictionary<string,double>();
+  public double Read(string key) { double value; return offsets.TryGetValue(key, out value) ? value : 0; }
+  public double Adjust(string key, double delta) {
+   double value = Math.Round(Math.Max(-5, Math.Min(5, Read(key) + delta)), 1);
+   offsets[key] = value; return value;
+  }
+  public void Reset(string key) { offsets.Remove(key); }
+  public static double Position(MediaSample sample, DateTime now, double offset) {
+   // Positive offset means show each lyric earlier; negative allows a delayed first line/prelude.
+   return PlaybackMath.Position(sample, now) + Math.Max(-5, Math.Min(5, offset));
+  }
+ }
  public static class LrcParser {
   static readonly Regex Stamp = new Regex(@"\[(\d{1,4}):([0-5]?\d)(?:[\.:](\d{1,3}))?\]", RegexOptions.Compiled);
   static readonly Regex Offset = new Regex(@"\[offset:([+-]?\d+)\]", RegexOptions.IgnoreCase);

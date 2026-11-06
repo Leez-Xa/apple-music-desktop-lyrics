@@ -33,6 +33,8 @@ namespace AMLyrics {
   readonly LyricSession lyrics;
   readonly LrclibLyricsProvider online;
   readonly Button retry;
+  readonly Button timingButton;
+  readonly LyricTiming timing = new LyricTiming();
   int attempts;
   double selectedDuration;
   DateTime retryAt = DateTime.MaxValue;
@@ -115,12 +117,27 @@ namespace AMLyrics {
    footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
    status.Foreground = Accent; status.FontSize = 11; status.Margin = new Thickness(0, 0, 16, 0);
    source.Foreground = Muted; source.FontSize = 11; source.TextAlignment = TextAlignment.Right; source.TextTrimming = TextTrimming.CharacterEllipsis;
-   footer.Children.Add(status); Grid.SetColumn(source, 1); footer.Children.Add(source); Grid.SetRow(footer, 2); grid.Children.Add(footer);
+   footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+   timingButton = MakeButton("校时", "校时：调整当前歌曲歌词提前或延后", () => { timingButton.ContextMenu.IsOpen = true; });
+   var timingMenu = new ContextMenu { Background = Surface, Foreground = Ink };
+   var earlier = new MenuItem { Header = "歌词提前 0.2 秒（歌词偏慢时）" };
+   earlier.Click += (s,e) => ChangeTiming(0.2, false);
+   var later = new MenuItem { Header = "歌词延后 0.2 秒（歌词偏快时）" };
+   later.Click += (s,e) => ChangeTiming(-0.2, false);
+   var reset = new MenuItem { Header = "恢复当前歌曲默认时间" };
+   reset.Click += (s,e) => ChangeTiming(0, true);
+   timingMenu.Items.Add(earlier); timingMenu.Items.Add(later); timingMenu.Items.Add(new Separator()); timingMenu.Items.Add(reset);
+   timingMenu.PlacementTarget = timingButton; timingButton.ContextMenu = timingMenu;
+   footer.Children.Add(status); Grid.SetColumn(source, 1); footer.Children.Add(source);
+   Grid.SetColumn(timingButton, 2); footer.Children.Add(timingButton); Grid.SetRow(footer, 2); grid.Children.Add(footer);
    Bind(Key.O, ModifierKeys.Control, () => { var ignored = ImportAsync(); });
    Bind(Key.Q, ModifierKeys.Control, Close); Bind(Key.Escape, ModifierKeys.None, HideWindow);
    Bind(Key.H, ModifierKeys.Control, HideWindow); Bind(Key.OemPlus, ModifierKeys.Control, () => ResizeLyrics(2));
    Bind(Key.Add, ModifierKeys.Control, () => ResizeLyrics(2)); Bind(Key.OemMinus, ModifierKeys.Control, () => ResizeLyrics(-2));
    Bind(Key.Subtract, ModifierKeys.Control, () => ResizeLyrics(-2));
+   Bind(Key.Left, ModifierKeys.Control, () => ChangeTiming(0.2, false));
+   Bind(Key.Right, ModifierKeys.Control, () => ChangeTiming(-0.2, false));
+   Bind(Key.D0, ModifierKeys.Control, () => ChangeTiming(0, true));
    if (!smoke) {
     tray = new Forms.NotifyIcon { Text = "Apple Music 桌面歌词 · 双击显示", Icon = System.Drawing.SystemIcons.Application, Visible = true };
     var menu = new Forms.ContextMenuStrip();
@@ -132,7 +149,7 @@ namespace AMLyrics {
     handle = new WindowInteropHelper(this).Handle;
     if (!smoke) { hotkeyRegistered = RegisterHotKey(handle, 1, 0x0001 | 0x0002 | 0x4000, 0x4C); HwndSource.FromHwnd(handle).AddHook(WndProc); }
    };
-   timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+   timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
    timer.Tick += (s,e) => Refresh();
    Loaded += (s,e) => { Refresh(); timer.Start(); };
    Closed += (s,e) => {

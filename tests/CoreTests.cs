@@ -48,6 +48,18 @@ class CoreTests {
   Near(PlaybackMath.Position(sample, now.AddSeconds(4)), 130, "Clock: stale position is not extrapolated");
   sample.Track.PositionSeconds = 179.5;
   Near(PlaybackMath.Position(sample, now.AddSeconds(1)), 180, "Clock: duration clamp");
+  var timing = new LyricTiming();
+  Near(timing.Read("song-a"), 0, "Calibration: no default lead is guessed");
+  Near(timing.Adjust("song-a", 0.2), 0.2, "Calibration: 200ms positive advance");
+  Near(timing.Read("song-b"), 0, "Calibration: another song stays unchanged");
+  Near(timing.Adjust("song-a", -0.4), -0.2, "Calibration: negative correction delays lyrics");
+  Near(timing.Adjust("song-a", 100), 5, "Calibration: positive limit");
+  Near(timing.Adjust("song-a", -100), -5, "Calibration: negative limit");
+  timing.Reset("song-a"); Near(timing.Read("song-a"), 0, "Calibration: reset preserves original LRC timestamps");
+  sample.Track.IsPlaying = false; sample.Track.PositionSeconds = 10.125;
+  Near(LyricTiming.Position(sample, now, 0.2), 10.325, "Calibration: precise fractional advance with paused clock");
+  sample.Track.PositionSeconds = 0;
+  Check(LyricTiming.Position(sample, now, -0.2) < 0, "Calibration: delayed first line keeps a prelude");
   var provider = new ControlledProvider();
   using (var session = new LyricSession(provider)) {
    Task old = session.SelectAsync(Track("old"));

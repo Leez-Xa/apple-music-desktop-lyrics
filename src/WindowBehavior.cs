@@ -32,6 +32,12 @@ namespace AMLyrics {
     notice = ex is System.Text.DecoderFallbackException ? "读取失败：请将歌词另存为 UTF-8 后重试" : "读取失败：" + ex.Message;
    } finally { importing = false; if (!closing) Refresh(); }
   }
+  void ChangeTiming(double delta, bool reset) {
+   var sample = media.Read();
+   if (sample.Track == null || !PlaybackMath.IsFresh(sample, DateTime.UtcNow)) return;
+   if (reset) timing.Reset(sample.Track.Key); else timing.Adjust(sample.Track.Key, delta);
+   Refresh();
+  }
   void RetryLyrics() {
    var sample = media.Read();
    if (sample.Track == null || !PlaybackMath.IsFresh(sample, DateTime.UtcNow)) return;
@@ -47,6 +53,8 @@ namespace AMLyrics {
    bool fresh = PlaybackMath.IsFresh(sample, DateTime.UtcNow);
    import.IsEnabled = !importing && fresh && sample.Track != null;
    retry.IsEnabled = fresh && sample.Track != null && !lyrics.Read().Loading;
+   timingButton.IsEnabled = fresh && sample.Track != null && lyrics.Read().Document != null && lyrics.Read().Document.IsSynchronized;
+   timingButton.Content = "校时";
    if (!fresh || sample.Status != "Connected" || sample.Track == null) {
     if (selectedKey.Length > 0) { selectedKey = ""; lyrics.Clear(); }
     title.Text = "Apple Music 桌面歌词";
@@ -81,7 +89,8 @@ namespace AMLyrics {
    if (!sample.TimelineReliable) {
     current.Text = "时间轴不可用"; next.Text = "已加载同步歌词，等待可靠播放位置"; status.Text = "同步已暂停"; return;
    }
-   double position = PlaybackMath.Position(sample, DateTime.UtcNow);
+   double offset = timing.Read(track.Key);
+   double position = LyricTiming.Position(sample, DateTime.UtcNow, offset);
    int index = PlaybackMath.FindLine(doc.Lines, position);
    if (index != displayedLineIndex) lyricScroll.ScrollToTop();
    if (index != displayedLineIndex && SystemParameters.ClientAreaAnimation) {
@@ -91,6 +100,10 @@ namespace AMLyrics {
    current.Text = index < 0 ? "前奏" : (doc.Lines[index].Text.Length == 0 ? "间奏" : doc.Lines[index].Text);
    next.Text = index + 1 < doc.Lines.Count ? doc.Lines[index + 1].Text : "";
    status.Text = track.IsPlaying ? "同步中" : "已暂停";
+   if (Math.Abs(offset) > 0.001) {
+    string label = (offset > 0 ? "提前 " : "延后 ") + Math.Abs(offset).ToString("0.0") + " 秒";
+    timingButton.Content = label;
+   }
   }
   internal void SavePreview(string path) {
    UpdateLayout();
@@ -100,7 +113,7 @@ namespace AMLyrics {
   }
   internal async Task SmokeAsync(string folder, Action<bool,string> check) {
    check(Topmost && MinWidth == 440 && MinHeight == 150, "Window: topmost and minimum size");
-   check(InputBindings.Count == 8, "Window: keyboard shortcuts registered");
+   check(InputBindings.Count == 11, "Window: keyboard shortcuts registered");
    check(System.Windows.Automation.AutomationProperties.GetName(import).Length > 0, "Window: import has accessible name");
    check(current.Text == "等待 Apple Music", "Window: disconnected state");
    var fake = media as TestMediaSource;
@@ -116,6 +129,11 @@ namespace AMLyrics {
    Width = 440; Height = 150; UpdateLayout(); SavePreview(Path.Combine(folder, "lyrics-compact-preview.png"));
    check(((FrameworkElement)Content).ActualWidth > 0 && import.ActualWidth >= 30 && import.IsVisible, "Window: minimum-size layout and import control");
    ResizeLyrics(-100); check(current.FontSize == 16, "Window: minimum font size");
+   fake.Sample.Track.IsPlaying = false; fake.Sample.Track.PositionSeconds = 19.9;
+   ChangeTiming(0.2, false);
+   check(displayedLineIndex == 2 && timingButton.Content.ToString().Contains("提前"), "Window: positive calibration advances the timed line");
+   ChangeTiming(0, true);
+   check(displayedLineIndex == 1 && timingButton.Content.ToString() == "校时", "Window: reset restores original line timing");
    fake.Sample.TimelineReliable = false; Refresh(); check(current.Text == "时间轴不可用", "Window: missing timeline state");
    fake.Sample.TimelineReliable = true; fake.Sample.Track.IsPlaying = false; Refresh(); check(status.Text == "已暂停", "Window: paused state");
    local.Assign(fake.Sample.Track.Key, LrcParser.Parse("没有时间戳的中文歌词\n第二行完整可读", "文本测试"));

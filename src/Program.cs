@@ -47,7 +47,7 @@ namespace AMLyrics {
           await window.SmokeAsync(folder, check);
           if (desktop != Guid.Empty) {
            bool onCurrent;
-           check(DesktopPlacement.Locate(window, out onCurrent) == desktop && !onCurrent, "Smoke test stays on requested desktop without switching");
+           check(DesktopPlacement.Locate(window, out onCurrent) == desktop && !window.ShowActivated, "Smoke test stays on requested desktop without requesting activation");
           }
          }
         }

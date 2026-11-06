@@ -13,7 +13,17 @@ function Await-Operation($operation, [Type]$resultType) {
     if (-not $task.Wait(4000)) { throw 'Windows media request timed out.' }
     return $task.Result
 }
+function Get-PlaybackPosition([double]$Position, [double]$Duration, [double]$Age, [bool]$Playing, [double]$Rate, [bool]$Reliable) {
+    # Both arguments must remain doubles: Max(0, age) selects an integer overload in Windows PowerShell.
+    if ($Playing -and $Reliable) { $Position += [Math]::Max(0.0, $Age) * $Rate }
+    return [Math]::Max(0.0, [Math]::Min($Duration, $Position))
+}
 $manager = $null
+$cachedProperties = $null
+$cachedSource = ''
+$metadataReadAt = [DateTime]::MinValue
+$previousPosition = 0.0
+$previousDuration = 0.0
 $owner = $null
 if ($ParentProcessId -gt 0) { $owner = [Diagnostics.Process]::GetProcessById($ParentProcessId) }
 while ($true) {
@@ -29,19 +39,29 @@ while ($true) {
         if ($null -eq $session) {
             $result = @{ Status = 'Waiting'; Message = '等待 Apple Music'; Sources = @($sessions | ForEach-Object { $_.SourceAppUserModelId }) }
         } else {
-            $properties = Await-Operation ($session.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
+            $earlyTimeline = $session.GetTimelineProperties()
+            $source = $session.SourceAppUserModelId
+            $newTrackBoundary = $earlyTimeline.Position.TotalSeconds -lt 0.5 -and $previousPosition -gt 2.0
+            $durationChanged = [Math]::Abs($earlyTimeline.EndTime.TotalSeconds - $previousDuration) -gt 0.5
+            if ($null -eq $cachedProperties -or $cachedSource -ne $source -or $newTrackBoundary -or $durationChanged -or ([DateTime]::UtcNow - $metadataReadAt).TotalMilliseconds -ge 500.0) {
+                $cachedProperties = Await-Operation ($session.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
+                $cachedSource = $source
+                $metadataReadAt = [DateTime]::UtcNow
+            }
+            $properties = $cachedProperties
             $playback = $session.GetPlaybackInfo()
             $timeline = $session.GetTimelineProperties()
             $now = [DateTimeOffset]::UtcNow
             $age = ($now - $timeline.LastUpdatedTime).TotalSeconds
-            $duration = $timeline.EndTime.TotalSeconds
-            $position = $timeline.Position.TotalSeconds
+            $duration = [double]$timeline.EndTime.TotalSeconds
+            $position = [double]$timeline.Position.TotalSeconds
+            $previousPosition = $position
+            $previousDuration = $duration
             $playing = $playback.PlaybackStatus.ToString() -eq 'Playing'
             $rate = 1.0
             if ($null -ne $playback.PlaybackRate) { $rate = [double]$playback.PlaybackRate }
             $reliable = $duration -gt 0 -and $position -ge 0 -and $position -le ($duration + 1) -and $age -ge -1 -and $timeline.LastUpdatedTime.Year -gt 2000
-            if ($playing -and $reliable) { $position += [Math]::Max(0, $age) * $rate }
-            $position = [Math]::Max(0, [Math]::Min($duration, $position))
+            $position = Get-PlaybackPosition $position $duration $age $playing $rate $reliable
             $result = @{
                 Status = 'Connected'; SourceAppId = $session.SourceAppUserModelId
                 Title = $properties.Title; Artist = $properties.Artist; Album = $properties.AlbumTitle
@@ -55,7 +75,8 @@ while ($true) {
     } catch {
         [Console]::WriteLine((@{ Status = 'Error'; Message = $_.Exception.Message } | ConvertTo-Json -Compress))
         $manager = $null
+        $cachedProperties = $null
     }
     if ($Once) { break }
-    Start-Sleep -Milliseconds 500
+    Start-Sleep -Milliseconds 150
 }

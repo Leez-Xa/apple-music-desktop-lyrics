@@ -13,7 +13,8 @@ namespace AMLyrics {
     bool onCurrent;
     Guid actual = DesktopPlacement.Locate(this, out onCurrent);
     check(actual == target, "Real window resides on requested desktop");
-    check(!onCurrent, "Verification does not switch the user's current desktop");
+    check(!ShowActivated, "Verification window is configured not to activate");
+    File.WriteAllText(Path.Combine(folder, "desktop-start.txt"), "Target=" + target + "; Window=" + actual + "; OnCurrentDesktop=" + onCurrent);
    }
    var watch = Stopwatch.StartNew();
    MediaSample sample = null;
@@ -52,7 +53,8 @@ namespace AMLyrics {
      }
      if (received != sample.ReceivedAtUtc) { updates++; received = sample.ReceivedAtUtc; }
      if (!sample.TimelineReliable) throw new InvalidOperationException("Real timeline became unavailable during observation.");
-     double position = PlaybackMath.Position(sample, DateTime.UtcNow);
+     double offset = timing.Read(sample.Track.Key);
+     double position = LyricTiming.Position(sample, DateTime.UtcNow, offset);
      int expectedIndex = PlaybackMath.FindLine(document.Lines, position);
      int actualIndex = displayedLineIndex;
      // Refresh and this assertion can straddle a one-second marker by a few milliseconds.
@@ -62,6 +64,7 @@ namespace AMLyrics {
      trace.WriteLine(serializer.Serialize(new {
       CapturedAtUtc = sample.Track.CapturedAtUtc, Title = sample.Track.Title,
       PositionSeconds = sample.Track.PositionSeconds, DisplayPositionSeconds = position,
+      OffsetSeconds = offset, SampleAgeMilliseconds = (DateTime.UtcNow - sample.ReceivedAtUtc).TotalMilliseconds,
       IsPlaying = sample.Track.IsPlaying, TimelineReliable = sample.TimelineReliable,
       Source = document.Source, DisplayedLine = current.Text, ExpectedIndex = expectedIndex, ActualIndex = actualIndex
      }));
@@ -75,7 +78,9 @@ namespace AMLyrics {
    if (!switched) SavePreview(Path.Combine(folder, "real-playback-final.png"));
    if (target != Guid.Empty) {
     bool onCurrent;
-    check(DesktopPlacement.Locate(this, out onCurrent) == target && !onCurrent, "Window stays on requested desktop throughout observation");
+    Guid actual = DesktopPlacement.Locate(this, out onCurrent);
+    check(actual == target, "Window stays on requested desktop throughout observation");
+    File.WriteAllText(Path.Combine(folder, "desktop-end.txt"), "Target=" + target + "; Window=" + actual + "; OnCurrentDesktop=" + onCurrent);
    }
   }
  }

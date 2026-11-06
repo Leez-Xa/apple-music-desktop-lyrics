@@ -7,4 +7,4 @@
 
 不需要安装依赖，不改变 Apple Music 配置。经用户授权，仅向 LRCLIB 发送歌名、歌手、专辑和时长用于匹配歌词；不发送音频、账号或令牌。
 
-[自动歌词实测记录](docs/AUTOMATIC-LYRICS.md)
+[自动歌词实测记录](docs/AUTOMATIC-LYRICS.md) · [延迟优化与校时说明](docs/TIMING.md)
