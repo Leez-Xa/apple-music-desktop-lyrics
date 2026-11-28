@@ -17,7 +17,7 @@ foreach ($reference in $references) {
 }
 $sources = @(
  'AppleMusicNativeLyrics.cs', 'Contracts.cs', 'DesktopPlacement.cs', 'HostIpc.cs', 'KoreanRomanizer.cs',
- 'LiveVerification.cs', 'LrclibLyrics.cs', 'Lyrics.cs', 'LyricsHitTestBridge.cs', 'LyricsLayout.cs',
+ 'LiveVerification.cs', 'LrclibLyrics.cs', 'Lyrics.cs', 'LyricsColorPickerDialog.cs', 'LyricsHitTestBridge.cs', 'LyricsLayout.cs',
  'LyricsOverlayChrome.cs', 'LyricsOverlayHover.cs', 'LyricsPreferencesStore.cs', 'LyricsSettingsPanel.cs',
  'LyricsTrackResolver.cs', 'LyricsUiContracts.cs', 'LyricsWindow.cs', 'MediaSource.cs',
  'ProcessJobGuard.cs', 'Program.cs', 'WindowBehavior.cs'

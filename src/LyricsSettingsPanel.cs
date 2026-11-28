@@ -12,6 +12,7 @@ using Forms = System.Windows.Forms;
 namespace AMLyrics {
  public sealed class LyricsSettingsPanel : Border {
   sealed class ColorField {
+   internal string Label;
    internal TextBox Box;
    internal Border Swatch;
    internal string DefaultHex;
@@ -57,7 +58,11 @@ namespace AMLyrics {
   bool applyingAppearance;
   bool colorDialogOpen;
 
+  int[] customColors = new int[0];
+
   internal Func<Forms.IWin32Window, DrawingColor, DrawingColor?> ColorDialogPicker { get; set; }
+  internal Func<Forms.IWin32Window, DrawingColor, int[], Tuple<DrawingColor?, int[]>> CustomColorDialogPicker { get; set; }
+  internal int[] CustomColors { get { return LyricsDisplaySettings.NormalizeCustomColors(customColors); } }
 
   public LyricsSettingsPanel(Action retry, Action import, Action<double> adjustTiming, Action resetTiming) {
    this.retry = retry; this.import = import; this.adjustTiming = adjustTiming; this.resetTiming = resetTiming;
@@ -190,7 +195,8 @@ namespace AMLyrics {
     ShadowEnabled = shadowCheckBox.IsChecked == true,
     AnimateLongLines = animateCheckBox.IsChecked == true,
     ShowTranslation = translationCheckBox.IsChecked == true,
-    ShowRomanization = romanizationCheckBox.IsChecked == true
+    ShowRomanization = romanizationCheckBox.IsChecked == true,
+    CustomColors = LyricsDisplaySettings.NormalizeCustomColors(customColors)
    };
    result.Normalize(); return result;
   }
@@ -212,6 +218,7 @@ namespace AMLyrics {
    try {
     fontSizeSlider.Value = appearance.FontSize; opacitySlider.Value = appearance.BackgroundOpacity;
     ApplyColor(foregroundColor, appearance.ForegroundHex); ApplyColor(strokeColor, appearance.StrokeHex);
+    customColors = LyricsDisplaySettings.NormalizeCustomColors(appearance.CustomColors);
     strokeCheckBox.IsChecked = appearance.StrokeEnabled; shadowCheckBox.IsChecked = appearance.ShadowEnabled; animateCheckBox.IsChecked = appearance.AnimateLongLines;
     translationCheckBox.IsChecked = appearance.ShowTranslation; romanizationCheckBox.IsChecked = appearance.ShowRomanization;
     if (!fontFamilyCombo.Items.Contains(appearance.FontFamilyName)) {
@@ -274,7 +281,7 @@ namespace AMLyrics {
    Button picker = MakeButton("选色", "选择" + label, null);
    picker.MinHeight = 26; picker.Padding = new Thickness(9, 2, 9, 2); picker.Margin = new Thickness(8, 0, 0, 0);
    Grid.SetColumn(picker, 3); row.Children.Add(picker); parent.Children.Add(row);
-   var field = new ColorField { Box = box, Swatch = swatch, DefaultHex = value };
+   var field = new ColorField { Label = label, Box = box, Swatch = swatch, DefaultHex = value };
    ApplyColor(field, value);
    box.TextChanged += (s, e) => CommitColorEdit(field, false);
    box.LostKeyboardFocus += (s, e) => CommitColorEdit(field, true);
@@ -303,26 +310,51 @@ namespace AMLyrics {
    var initial = DrawingColor.FromArgb(current.R, current.G, current.B);
    colorDialogOpen = true;
    try {
-    var choose = ColorDialogPicker;
-    DrawingColor? selection = choose == null ? ShowColorDialog(owner, initial) : choose(owner, initial);
-    if (!selection.HasValue) return;
-    var rgb = selection.Value;
-    if (rgb.R == current.R && rgb.G == current.G && rgb.B == current.B) return;
-    Color color = Color.FromArgb(current.A, rgb.R, rgb.G, rgb.B);
-    SetColor(field, FormatPickedHex(field.Hex, color), color);
-    field.Box.Text = field.Hex;
-    RaiseAppearanceChanged();
+    DrawingColor? selection = null;
+    int[] updatedCustom = customColors;
+    var customChoose = CustomColorDialogPicker;
+    if (customChoose != null) {
+     var resultTuple = customChoose(owner, initial, LyricsDisplaySettings.NormalizeCustomColors(customColors));
+     selection = resultTuple == null ? null : resultTuple.Item1;
+     updatedCustom = resultTuple == null ? customColors : resultTuple.Item2;
+    } else if (ColorDialogPicker != null) {
+     selection = ColorDialogPicker(owner, initial);
+    } else {
+     selection = ShowColorDialog(owner, initial, customColors, "选择" + field.Label, out updatedCustom);
+    }
+    int[] normalizedUpdated = LyricsDisplaySettings.NormalizeCustomColors(updatedCustom);
+    bool customChanged = !LyricsDisplaySettings.CustomColorsEqual(customColors, normalizedUpdated);
+    if (customChanged) customColors = normalizedUpdated;
+    bool colorChanged = false;
+    if (selection.HasValue) {
+     var rgb = selection.Value;
+     if (rgb.R != current.R || rgb.G != current.G || rgb.B != current.B) {
+      Color color = Color.FromArgb(current.A, rgb.R, rgb.G, rgb.B);
+      SetColor(field, FormatPickedHex(field.Hex, color), color);
+      field.Box.Text = field.Hex;
+      colorChanged = true;
+     }
+    }
+    if (colorChanged || customChanged) RaiseAppearanceChanged();
    } finally {
     colorDialogOpen = false;
     if (picker.IsVisible && picker.IsEnabled) picker.Focus();
    }
   }
 
-  static DrawingColor? ShowColorDialog(Forms.IWin32Window owner, DrawingColor initial) {
-   using (var dialog = new Forms.ColorDialog { FullOpen = true, Color = initial }) {
-    if (dialog.ShowDialog(owner) == Forms.DialogResult.OK) return dialog.Color;
-    return null;
+  static DrawingColor? ShowColorDialog(Forms.IWin32Window owner, DrawingColor initial, int[] existingCustomColors, string title, out int[] updatedCustomColors) {
+   Color wpfInitial = Color.FromRgb(initial.R, initial.G, initial.B);
+   var dialog = new LyricsColorPickerDialog(wpfInitial, existingCustomColors, title);
+   if (owner != null && owner.Handle != IntPtr.Zero) {
+    dialog.SetOwnerAndPosition(owner.Handle);
    }
+   bool? result = dialog.ShowDialog();
+   updatedCustomColors = LyricsDisplaySettings.NormalizeCustomColors(dialog.GetUpdatedCustomColors());
+   if (result == true) {
+    Color picked = dialog.SelectedColor;
+    return DrawingColor.FromArgb(picked.R, picked.G, picked.B);
+   }
+   return null;
   }
 
   static void ApplyColor(ColorField field, string value) {

@@ -161,7 +161,8 @@ namespace AMLyrics {
      ShadowEnabled = true,
      AnimateLongLines = true,
      ShowTranslation = false,
-     ShowRomanization = false
+     ShowRomanization = false,
+     CustomColors = new int[0]
     }
    };
    preferences.Normalize();
@@ -201,6 +202,7 @@ namespace AMLyrics {
 
   static PersistedPreferences ToPersisted(LyricsWindowPreferences preferences) {
    LyricsDisplaySettings display = preferences.Display ?? new LyricsDisplaySettings();
+   int[] custom = LyricsDisplaySettings.NormalizeCustomColors(display.CustomColors);
    return new PersistedPreferences {
     Version = CurrentVersion,
     Enabled = preferences.Enabled,
@@ -221,7 +223,8 @@ namespace AMLyrics {
      ShadowEnabled = display.ShadowEnabled,
      AnimateLongLines = display.AnimateLongLines,
      ShowTranslation = display.ShowTranslation,
-     ShowRomanization = display.ShowRomanization
+     ShowRomanization = display.ShowRomanization,
+     CustomColors = custom.Length > 0 ? custom : null
     }
    };
   }
@@ -247,7 +250,8 @@ namespace AMLyrics {
      ShadowEnabled = display.ShadowEnabled ?? true,
      AnimateLongLines = display.AnimateLongLines ?? true,
      ShowTranslation = display.ShowTranslation ?? false,
-     ShowRomanization = display.ShowRomanization ?? false
+     ShowRomanization = display.ShowRomanization ?? false,
+     CustomColors = LyricsDisplaySettings.NormalizeCustomColors(display.CustomColors)
     }
    };
    preferences.Normalize();
@@ -290,6 +294,7 @@ namespace AMLyrics {
    public bool? AnimateLongLines { get; set; }
    public bool? ShowTranslation { get; set; }
    public bool? ShowRomanization { get; set; }
+   public int[] CustomColors { get; set; }
   }
  }
 }

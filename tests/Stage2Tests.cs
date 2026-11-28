@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Windows.Media;
 using AMLyrics;
 
 class Stage2Tests {
@@ -40,6 +41,7 @@ class Stage2Tests {
     TestKoreanRomanizerAndCleaner();
     TestHangulAndCrossScriptFusion();
     TestPreferencesStoreRoundtripAndLegacy(tempRoot);
+    TestCustomColorPaletteState();
     TestStandbyWatcherStopIncludeHost(watchExePath);
    } catch (Exception ex) {
    Console.WriteLine("FAIL Unhandled exception: " + ex);
@@ -528,23 +530,52 @@ class Stage2Tests {
  }
 
  static void TestPreferencesStoreRoundtripAndLegacy(string tempRoot) {
+  int[] normNull = LyricsDisplaySettings.NormalizeCustomColors(null);
+  int[] normWhite = LyricsDisplaySettings.NormalizeCustomColors(new[] { 0x00FFFFFF, unchecked((int)0xFFFFFFFF) });
+  Check(normNull != null && normNull.Length == 0 && normWhite != null && normWhite.Length == 0,
+   "LyricsDisplaySettings.NormalizeCustomColors: null and all-white return Length == 0");
+
+  int[] normPartial = LyricsDisplaySettings.NormalizeCustomColors(new[] { unchecked((int)0xFFAA55FF), 0x00112233 });
+  bool partialRestWhite = normPartial != null && normPartial.Length == 16 &&
+                          normPartial[0] == 0x00AA55FF && normPartial[1] == 0x00112233;
+  if (partialRestWhite) {
+   for (int i = 2; i < 16; i++) {
+    if (normPartial[i] != 0x00FFFFFF) {
+     partialRestWhite = false;
+     break;
+    }
+   }
+  }
+  Check(partialRestWhite,
+   "LyricsDisplaySettings.NormalizeCustomColors: partial array masks high byte and pads 2..15 with 0x00FFFFFF");
+
+  Check(LyricsDisplaySettings.CustomColorsEqual(null, new[] { 0x00FFFFFF, unchecked((int)0xFFFFFFFF) }) &&
+        LyricsDisplaySettings.CustomColorsEqual(new[] { unchecked((int)0xFFAA55FF), 0x00112233 }, new[] { 0x00AA55FF, 0x00112233 }),
+   "LyricsDisplaySettings.CustomColorsEqual: treats normalized equivalent arrays as equal");
+
   string prefPath = Path.Combine(tempRoot, "stage2-prefs.json");
   var store = new LyricsPreferencesStore(prefPath);
   var prefs = LyricsPreferencesStore.CreateDefaultPreferences();
   prefs.Display.ShowTranslation = true;
   prefs.Display.ShowRomanization = true;
   prefs.Display.FontSize = 35;
+  prefs.Display.CustomColors = new[] { 0x00AA55FF, 0x00112233 };
 
   var saveRes = store.Save(prefs);
-  Check(saveRes.Succeeded, "PreferencesStore: saves ShowTranslation=true and ShowRomanization=true");
+  Check(saveRes.Succeeded, "PreferencesStore: saves ShowTranslation=true, ShowRomanization=true, and CustomColors");
 
   var reloadStore = new LyricsPreferencesStore(prefPath);
   var loadRes = reloadStore.Load();
   Check(loadRes.Status == LyricsPreferencesLoadStatus.Loaded &&
         loadRes.Preferences.Display.ShowTranslation &&
         loadRes.Preferences.Display.ShowRomanization &&
-        Math.Abs(loadRes.Preferences.Display.FontSize - 35) < 0.0001,
-   "PreferencesStore: round-trip preserves ShowTranslation=true, ShowRomanization=true, FontSize=35");
+        Math.Abs(loadRes.Preferences.Display.FontSize - 35) < 0.0001 &&
+        loadRes.Preferences.Display.CustomColors != null &&
+        loadRes.Preferences.Display.CustomColors.Length == 16 &&
+        loadRes.Preferences.Display.CustomColors[0] == 0x00AA55FF &&
+        loadRes.Preferences.Display.CustomColors[1] == 0x00112233 &&
+        loadRes.Preferences.Display.CustomColors[15] == 0x00FFFFFF,
+   "PreferencesStore: round-trip preserves ShowTranslation=true, ShowRomanization=true, FontSize=35, CustomColors");
 
   string legacyPath = Path.Combine(tempRoot, "legacy-v1-prefs.json");
   string legacyJson = "{\"Version\":1,\"Enabled\":true,\"Locked\":false,\"Width\":800,\"Display\":{\"FontSize\":32,\"ForegroundHex\":\"#FFFFFF\",\"FontFamilyName\":\"Segoe UI\",\"FontWeightName\":\"常规\",\"StrokeHex\":\"#0F0F12\",\"BackgroundOpacity\":0.2,\"StrokeEnabled\":true,\"ShadowEnabled\":true,\"AnimateLongLines\":true}}";
@@ -557,8 +588,235 @@ class Stage2Tests {
         Math.Abs(legacyRes.Preferences.Width - 800) < 0.0001 &&
         Math.Abs(legacyRes.Preferences.Display.FontSize - 32) < 0.0001 &&
         !legacyRes.Preferences.Display.ShowTranslation &&
-        !legacyRes.Preferences.Display.ShowRomanization,
-   "PreferencesStore: loads legacy Version 1 JSON omitting ShowTranslation/ShowRomanization and defaults both to false");
+        !legacyRes.Preferences.Display.ShowRomanization &&
+        legacyRes.Preferences.Display.CustomColors != null &&
+        legacyRes.Preferences.Display.CustomColors.Length == 0,
+   "PreferencesStore: loads legacy Version 1 JSON omitting ShowTranslation/ShowRomanization/CustomColors");
+ }
+
+ static void TestCustomColorPaletteState() {
+  Check(CustomColorPaletteState.SlotCount == 16 &&
+        CustomColorPaletteState.EmptyColorRef == 0x00FFFFFF &&
+        CustomColorPaletteState.IsEmptySlot(CustomColorPaletteState.EmptyColorRef) &&
+        !CustomColorPaletteState.IsEmptySlot(0x000000FF) &&
+        !CustomColorPaletteState.IsEmptySlot(0x00FF0000),
+   "CustomColorPaletteState: constants and IsEmptySlot match contract");
+
+  // 1. Null and all-white initialization default to slot 0
+  var emptyNull = new CustomColorPaletteState(null);
+  bool allSlotsEmpty = emptyNull.SelectedSlotIndex == 0;
+  for (int i = 0; i < CustomColorPaletteState.SlotCount; i++) {
+   if (!emptyNull.IsSlotEmpty(i) || emptyNull.GetSlotColorRef(i) != CustomColorPaletteState.EmptyColorRef) {
+    allSlotsEmpty = false;
+    break;
+   }
+  }
+  int[] emptyGetSlots = emptyNull.GetSlots();
+  int[] emptyNorm = emptyNull.GetNormalizedCustomColors();
+  Check(allSlotsEmpty &&
+        emptyGetSlots != null && emptyGetSlots.Length == 16 &&
+        emptyNorm != null && emptyNorm.Length == 0,
+   "CustomColorPaletteState: null init selects slot 0 with 16 empty slots and empty normalized array");
+
+  int[] allWhite = new int[16];
+  for (int i = 0; i < allWhite.Length; i++) {
+   allWhite[i] = CustomColorPaletteState.EmptyColorRef;
+  }
+  var emptyWhite = new CustomColorPaletteState(allWhite);
+  Check(CustomColorPaletteState.FindFirstEmptySlot(allWhite) == 0 &&
+        emptyWhite.SelectedSlotIndex == 0 &&
+        emptyWhite.GetNormalizedCustomColors().Length == 0,
+   "CustomColorPaletteState: all-white init selects slot 0 and normalizes to length 0");
+
+  // 2. Red at slot 0 -> init selects first empty slot (1)
+  var state = new CustomColorPaletteState(new int[] { 0x000000FF });
+  int[] normAfterRed = state.GetNormalizedCustomColors();
+  Check(state.SelectedSlotIndex == 1 &&
+        !state.IsSlotEmpty(0) &&
+        state.GetSlotColorRef(0) == 0x000000FF &&
+        state.IsSlotEmpty(1) &&
+        normAfterRed != null && normAfterRed.Length == 16 &&
+        normAfterRed[0] == 0x000000FF &&
+        normAfterRed[1] == CustomColorPaletteState.EmptyColorRef,
+   "CustomColorPaletteState: init with red in slot 0 selects first empty slot 1");
+
+  // 3. Save blue into selected slot 1 -> slot 0 stays red, slot 1 becomes 0x00FF0000, advances to slot 2
+  int savedBlueIndex;
+  bool savedBlue = state.SaveColorToSelectedSlot(Color.FromRgb(0, 0, 255), out savedBlueIndex);
+  Check(savedBlue &&
+        savedBlueIndex == 1 &&
+        state.GetSlotColorRef(0) == 0x000000FF &&
+        state.GetSlotColorRef(1) == 0x00FF0000 &&
+        !state.IsSlotEmpty(1) &&
+        state.SelectedSlotIndex == 2,
+   "CustomColorPaletteState: saving blue to slot 1 writes 0x00FF0000, preserves slot 0, advances to slot 2");
+
+  // 4. Select empty slot 5 -> returns false, moves selection to 5; save green -> writes slot 5, advances to 6
+  Color loadedEmpty;
+  bool selectedEmpty5 = state.SelectSlot(5, out loadedEmpty);
+  Check(!selectedEmpty5 && state.SelectedSlotIndex == 5,
+   "CustomColorPaletteState: SelectSlot(5) on empty slot returns false and updates SelectedSlotIndex to 5");
+
+  int savedGreenIndex;
+  bool savedGreen = state.SaveColorToSelectedSlot(Color.FromRgb(0, 204, 68), out savedGreenIndex);
+  Check(savedGreen &&
+        savedGreenIndex == 5 &&
+        state.GetSlotColorRef(5) == 0x0044CC00 &&
+        !state.IsSlotEmpty(5) &&
+        state.SelectedSlotIndex == 6,
+   "CustomColorPaletteState: saving green to slot 5 writes 0x0044CC00 and advances to slot 6");
+
+  // 5. Select filled slot 0 -> returns true with red (255, 0, 0) and SelectedSlotIndex == 0
+  Color loadedRed;
+  bool selectedRed0 = state.SelectSlot(0, out loadedRed);
+  Check(selectedRed0 &&
+        loadedRed == Color.FromRgb(255, 0, 0) &&
+        state.SelectedSlotIndex == 0,
+   "CustomColorPaletteState: SelectSlot(0) on red slot returns true with Color(255,0,0) and SelectedSlotIndex 0");
+
+  // 6. Clear slot 0 -> returns true, becomes empty, stays on slot 0; second clear returns false
+  bool clearedFirst = state.ClearSelectedSlot();
+  Check(clearedFirst &&
+        state.IsSlotEmpty(0) &&
+        state.GetSlotColorRef(0) == CustomColorPaletteState.EmptyColorRef &&
+        state.SelectedSlotIndex == 0 &&
+        state.GetSlotColorRef(1) == 0x00FF0000 &&
+        state.GetSlotColorRef(5) == 0x0044CC00,
+   "CustomColorPaletteState: ClearSelectedSlot clears slot 0, keeps selection at 0, preserves other slots");
+
+  bool clearedSecond = state.ClearSelectedSlot();
+  Check(!clearedSecond && state.SelectedSlotIndex == 0,
+   "CustomColorPaletteState: second ClearSelectedSlot on empty slot 0 returns false");
+
+  // 7. Full 16 slots, slot 15 empty, and wrap-around advancement
+  int[] fullSlots = new int[16];
+  for (int i = 0; i < 16; i++) {
+   fullSlots[i] = CustomColorPaletteState.ToColorRef((byte)(16 + i * 12), (byte)(32 + i * 8), (byte)(48 + i * 10));
+  }
+  Check(CustomColorPaletteState.FindFirstEmptySlot(fullSlots) == 0 &&
+        CustomColorPaletteState.FindNextEmptySlot(fullSlots, 0) == 1 &&
+        CustomColorPaletteState.FindNextEmptySlot(fullSlots, 14) == 15 &&
+        CustomColorPaletteState.FindNextEmptySlot(fullSlots, 15) == 0,
+   "CustomColorPaletteState: full 16 slots FindFirstEmptySlot returns 0 and FindNextEmptySlot wraps (idx+1)%16");
+
+  var fullState = new CustomColorPaletteState(fullSlots);
+  int fullSavedIdx;
+  bool fullSaved0 = fullState.SaveColorToSelectedSlot(Color.FromRgb(12, 34, 56), out fullSavedIdx);
+  Check(fullSaved0 && fullSavedIdx == 0 &&
+        fullState.GetSlotColorRef(0) == 0x0038220C &&
+        fullState.SelectedSlotIndex == 1,
+   "CustomColorPaletteState: full palette init selects 0 and saving advances to 1");
+
+  Color loadedFull15;
+  bool selectedFull15 = fullState.SelectSlot(15, out loadedFull15);
+  bool fullSaved15 = fullState.SaveColorToSelectedSlot(Color.FromRgb(90, 80, 70), out fullSavedIdx);
+  Check(selectedFull15 &&
+        loadedFull15 == CustomColorPaletteState.FromColorRef(fullSlots[15]) &&
+        fullSaved15 && fullSavedIdx == 15 &&
+        fullState.GetSlotColorRef(15) == 0x0046505A &&
+        fullState.SelectedSlotIndex == 0,
+   "CustomColorPaletteState: full palette saving slot 15 wraps selection to 0");
+
+  int[] almostFull15 = new int[16];
+  for (int i = 0; i < 15; i++) {
+   almostFull15[i] = fullSlots[i];
+  }
+  almostFull15[15] = CustomColorPaletteState.EmptyColorRef;
+  Check(CustomColorPaletteState.FindFirstEmptySlot(almostFull15) == 15,
+   "CustomColorPaletteState: FindFirstEmptySlot returns 15 when 0..14 are full");
+
+  var state15 = new CustomColorPaletteState(almostFull15);
+  Check(state15.SelectedSlotIndex == 15,
+   "CustomColorPaletteState: init selects 15 when only slot 15 is empty");
+
+  Color loaded14;
+  bool selected14 = state15.SelectSlot(14, out loaded14);
+  int saved14Idx;
+  bool saved14 = state15.SaveColorToSelectedSlot(Color.FromRgb(10, 20, 30), out saved14Idx);
+  Check(selected14 &&
+        loaded14 == CustomColorPaletteState.FromColorRef(fullSlots[14]) &&
+        saved14 && saved14Idx == 14 && state15.SelectedSlotIndex == 15,
+   "CustomColorPaletteState: saving non-white in slot 14 advances to empty slot 15");
+
+  int[] slot0Empty = new int[16];
+  slot0Empty[0] = CustomColorPaletteState.EmptyColorRef;
+  for (int i = 1; i < 16; i++) {
+   slot0Empty[i] = fullSlots[i];
+  }
+  var stateWrap0 = new CustomColorPaletteState(slot0Empty);
+  Color loadedWrap15;
+  bool selectedWrap15 = stateWrap0.SelectSlot(15, out loadedWrap15);
+  int savedWrap15Idx;
+  bool savedWrap15 = stateWrap0.SaveColorToSelectedSlot(Color.FromRgb(200, 100, 50), out savedWrap15Idx);
+  Check(selectedWrap15 &&
+        loadedWrap15 == CustomColorPaletteState.FromColorRef(fullSlots[15]) &&
+        savedWrap15 && savedWrap15Idx == 15 &&
+        stateWrap0.GetSlotColorRef(15) == 0x003264C8 &&
+        stateWrap0.SelectedSlotIndex == 0,
+   "CustomColorPaletteState: saving non-white in slot 15 wraps to empty slot 0");
+
+  // 8. Pure white (255, 255, 255) cannot be saved and leaves slot and selection unchanged
+  int whiteIdx;
+  bool whiteOnEmpty = emptyNull.SaveColorToSelectedSlot(Color.FromRgb(255, 255, 255), out whiteIdx);
+  Check(!whiteOnEmpty && emptyNull.IsSlotEmpty(0) && emptyNull.SelectedSlotIndex == 0,
+   "CustomColorPaletteState: saving pure white on empty slot returns false without mutating slot or selection");
+
+  var whiteGuard = new CustomColorPaletteState(new int[] { 0x000000FF });
+  Color dummyLoaded;
+  bool whiteGuardSelected0 = whiteGuard.SelectSlot(0, out dummyLoaded);
+  bool whiteOnFilled = whiteGuard.SaveColorToSelectedSlot(Color.FromRgb(255, 255, 255), out whiteIdx);
+  Check(whiteGuardSelected0 &&
+        dummyLoaded == Color.FromRgb(255, 0, 0) &&
+        !whiteOnFilled &&
+        whiteGuard.GetSlotColorRef(0) == 0x000000FF &&
+        whiteGuard.SelectedSlotIndex == 0,
+   "CustomColorPaletteState: saving pure white on filled slot returns false and preserves existing color and selection");
+
+  // 9. ToColorRef / FromColorRef (no R/B swap) and RgbToHsv / HsvToRgb roundtrip accuracy (<= 1)
+  Check(CustomColorPaletteState.ToColorRef(255, 0, 0) == 0x000000FF &&
+        CustomColorPaletteState.ToColorRef(0, 255, 0) == 0x0000FF00 &&
+        CustomColorPaletteState.ToColorRef(0, 0, 255) == 0x00FF0000 &&
+        CustomColorPaletteState.ToColorRef(0, 204, 68) == 0x0044CC00 &&
+        CustomColorPaletteState.FromColorRef(0x000000FF) == Color.FromRgb(255, 0, 0) &&
+        CustomColorPaletteState.FromColorRef(0x0000FF00) == Color.FromRgb(0, 255, 0) &&
+        CustomColorPaletteState.FromColorRef(0x00FF0000) == Color.FromRgb(0, 0, 255) &&
+        CustomColorPaletteState.FromColorRef(0x0044CC00) == Color.FromRgb(0, 204, 68),
+   "CustomColorPaletteState: ToColorRef and FromColorRef preserve R/G/B byte order without R/B reversal");
+
+  Color[] hsvSamples = new Color[] {
+   Color.FromRgb(255, 0, 0),
+   Color.FromRgb(0, 255, 0),
+   Color.FromRgb(0, 0, 255),
+   Color.FromRgb(0, 0, 0),
+   Color.FromRgb(128, 128, 128),
+   Color.FromRgb(255, 255, 255),
+   Color.FromRgb(0, 204, 68),
+   Color.FromRgb(170, 85, 255),
+   Color.FromRgb(213, 147, 62),
+   Color.FromRgb(45, 110, 195)
+  };
+  bool allRoundtripOk = true;
+  string roundtripDetail = "";
+  for (int i = 0; i < hsvSamples.Length; i++) {
+   Color c = hsvSamples[i];
+   double h;
+   double s;
+   double v;
+   CustomColorPaletteState.RgbToHsv(c.R, c.G, c.B, out h, out s, out v);
+   Color rt = CustomColorPaletteState.HsvToRgb(h, s, v);
+   if (double.IsNaN(h) || double.IsNaN(s) || double.IsNaN(v) ||
+       rt.A != 255 ||
+       Math.Abs(rt.R - c.R) > 1 ||
+       Math.Abs(rt.G - c.G) > 1 ||
+       Math.Abs(rt.B - c.B) > 1) {
+    allRoundtripOk = false;
+    roundtripDetail = "mismatch at (" + c.R + "," + c.G + "," + c.B + ") -> (" + rt.R + "," + rt.G + "," + rt.B + ", A=" + rt.A + ")";
+    break;
+   }
+  }
+  Check(allRoundtripOk,
+   "CustomColorPaletteState: RgbToHsv/HsvToRgb roundtrip accuracy <= 1 for primary, grayscale, and mid-tone colors" +
+   (allRoundtripOk ? "" : " (" + roundtripDetail + ")"));
  }
 
  static void TestStandbyWatcherStopIncludeHost(string watchExePath) {

@@ -31,7 +31,7 @@ Windows 原生置顶歌词窗口，使用系统媒体会话读取 Apple Music �
 | 设置 | 悬停/聚焦后打开「⚙」，内含「显示」「歌词」「同步」三组（打开设置时悬浮工具栏会自动隐藏以免遮挡） |
 | 校时 | 在「⚙ → 同步」中每次提前或延后 0.2 秒，按歌曲保存 |
 | 校时快捷键 | Ctrl+左箭头提前、Ctrl+右箭头延后、Ctrl+0 恢复当前歌曲默认 |
-| 调整字号和颜色 | 「设置 → 显示」；字号 16–48，也可用 Ctrl + 加号 / 减号 |
+| 调整字号和颜色 | 「设置 → 显示」；字号 16–48，也可用 Ctrl + 加号 / 减号；内置调色盘支持 HEX/RGB 输入、16 格自定义颜色持久化（默认选中首个空槽、点击选格带黑框提示、支持清除） |
 | 锁定 / 解锁（鼠标穿透） | 点工具栏「🔒」开启锁定并让歌词本体穿透鼠标；解锁可在鼠标移到歌词上时点击外侧浮出的「解锁」按钮，或使用系统托盘菜单 / `Ctrl+Alt+Shift+L` |
 | 重新自动获取 | 「设置 → 歌词 → 重试」；会清除该曲的临时未匹配缓存 |
 | 显示翻译 / 音译 | 「设置 → 歌词」勾选「显示翻译」「显示音译」；单开一种为双轨，同时开启且可用时为紧凑三轨，状态自动保存 |
@@ -73,6 +73,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\TimelinePrecisio
 .\scripts\VerifyPlayback.ps1 -BuildDirectory '完整的 build-* 目录路径' -DesktopNumber 2
 .\scripts\Integration.ps1 -BuildDirectory '完整的 build-* 目录路径'
 .\scripts\Probe.ps1
+# Stage 2 多轨/原生融合/调色盘回归与 T4 生命周期回归：
+.\tests\Stage2Regression.ps1 -BuildDirectory '完整的 build-* 目录路径'
+.\tests\LifecycleRegression.ps1 -BuildDirectory '完整的 build-* 目录路径'
 ```
 
 VerifyPlayback.ps1 将本次创建的验证窗口放到指定的已存在桌面，保持当前桌面不切换。它自动获取当前歌曲的真实 LRCLIB 同步歌词并核对实际播放位置；未获取真实同步歌词时检查失败。结束后自动退出，日志与截图位于新的 work/live-*。不会移动 Apple Music 或其他已有窗口，也不会自动新建桌面。
@@ -87,4 +90,4 @@ Build.ps1 每次新建 outputs/build-* 目录。Test.ps1 默认先构建，然�
 - 若关闭或未能匹配 LRCLIB 同步歌词，且同桌面 Apple Music「歌词」面板处于展开状态，也会实时只读跟随 Apple Music 原生歌词进度。
 - **跨虚拟桌面限制（实机已验证）**：当 Apple Music 窗口位于另一个虚拟桌面（被 Windows DWM 隐藏 `Cloaked`）时，WinUI 3 会隐藏其 XAML 内容子树（仅暴露标题栏，无法跨桌面直接读取 `TimeBasedLyrics`）。切回同一桌面并展开歌词面板后即可恢复自动融合与缓存。LRCLIB 覆盖范围、版本和时间戳质量仍会影响匹配结果；未找到可靠匹配时会如实提示，不拿其他版本或纯文本伪装同步歌词。
 
-当前界面与架构说明见 [DESIGN.md](../DESIGN.md)；早期阶段的历史里程碑记录见 [VALIDATION.md](VALIDATION.md)、[AUTOMATIC-LYRICS.md](AUTOMATIC-LYRICS.md) 与 [TIMING.md](TIMING.md)。
+当前界面与架构说明见 [DESIGN.md](../DESIGN.md)。

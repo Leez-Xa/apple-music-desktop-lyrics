@@ -463,6 +463,7 @@ namespace AMLyrics {
    target.AnimateLongLines = source.AnimateLongLines;
    target.ShowTranslation = source.ShowTranslation;
    target.ShowRomanization = source.ShowRomanization;
+   target.CustomColors = LyricsDisplaySettings.NormalizeCustomColors(source.CustomColors);
   }
   void Bind(Key key, ModifierKeys mods, Action action) {
    var command = new RoutedCommand(); CommandBindings.Add(new CommandBinding(command, (s,e) => action()));

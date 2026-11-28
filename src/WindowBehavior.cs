@@ -265,7 +265,7 @@ namespace AMLyrics {
    KeepWindowVisible();
    UpdateLayout();
   }
-  void CheckColorPickers(Action<bool,string> check) {
+  void CheckColorPickers(Action<bool,string> check, string folder) {
    displaySettings.ForegroundHex = "#A0F0F1F2";
    displaySettings.StrokeHex = "#123456";
    ApplyDisplaySettings();
@@ -296,9 +296,79 @@ namespace AMLyrics {
     check(changes == 2 && displaySettings.StrokeHex == "#ABCDEF" && displaySettings.ForegroundHex == "#A0123456" &&
      ((SolidColorBrush)current.StrokeBrush).Color == Color.FromRgb(171, 205, 239),
      "Window: stroke picker updates the outline without changing the foreground");
+    settingsPanel.ColorDialogPicker = null;
+    settingsPanel.CustomColorDialogPicker = (owner, initial, existing) => Tuple.Create<System.Drawing.Color?, int[]>(null, new[] { 0x00336699 });
+    foregroundPicker.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    check(changes == 3 && displaySettings.CustomColors.Length == 16 && displaySettings.CustomColors[0] == 0x00336699,
+     "Window: adding a custom color updates and saves CustomColors even when the dialog is cancelled");
+    int[] receivedExisting = null;
+    settingsPanel.CustomColorDialogPicker = (owner, initial, existing) => {
+     receivedExisting = existing;
+     return Tuple.Create<System.Drawing.Color?, int[]>(null, existing);
+    };
+    strokePicker.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    check(receivedExisting != null && receivedExisting.Length == 16 && receivedExisting[0] == 0x00336699 && changes == 3,
+     "Window: reopening another color picker receives the saved CustomColors palette");
+    displaySettings.CustomColors = new int[0];
+    settingsPanel.ApplyAppearance(displaySettings);
+
+    var pickerDialog = new LyricsColorPickerDialog(Color.FromRgb(255, 247, 250), new[] { 0x000000FF }, "选择字体颜色");
+    try {
+     pickerDialog.ShowActivated = false;
+     pickerDialog.SetOwnerAndPosition(handle);
+     check(pickerDialog.SelectedCustomSlotIndex == 1 &&
+      pickerDialog.CustomSlotFrames[1].BorderBrush == Brushes.Black &&
+      pickerDialog.CustomSlotFrames[0].BorderBrush != Brushes.Black,
+      "Window: custom color picker defaults selection frame to first empty slot when slot 0 is occupied");
+
+     pickerDialog.SetCurrentColor(Color.FromRgb(0, 0, 255));
+     pickerDialog.ClickSaveCustomColor();
+     int[] afterBlue = pickerDialog.GetUpdatedCustomColors();
+     check(afterBlue.Length == 16 && afterBlue[0] == 0x000000FF && afterBlue[1] == 0x00FF0000 &&
+      pickerDialog.SelectedCustomSlotIndex == 2 &&
+      pickerDialog.CustomSlotFrames[2].BorderBrush == Brushes.Black,
+      "Window: saving blue writes slot 1, keeps slot 0 red, and moves black frame to slot 2");
+
+     pickerDialog.SetCurrentColor(Color.FromRgb(0, 204, 68));
+     pickerDialog.ClickCustomSlot(5);
+     check(pickerDialog.SelectedCustomSlotIndex == 5 &&
+      pickerDialog.SelectedColor == Color.FromRgb(0, 204, 68) &&
+      pickerDialog.CustomSlotFrames[5].BorderBrush == Brushes.Black,
+      "Window: clicking empty slot 5 moves black frame without clearing current edited color");
+
+     pickerDialog.ClickSaveCustomColor();
+     int[] afterGreen = pickerDialog.GetUpdatedCustomColors();
+     check(afterGreen.Length == 16 && afterGreen[5] == 0x0044CC00 &&
+      pickerDialog.SelectedCustomSlotIndex == 6 &&
+      pickerDialog.CustomSlotFrames[6].BorderBrush == Brushes.Black,
+      "Window: saving green writes user-selected slot 5 and advances frame to slot 6");
+
+     pickerDialog.ClickCustomSlot(0);
+     check(pickerDialog.SelectedCustomSlotIndex == 0 &&
+      pickerDialog.SelectedColor == Color.FromRgb(255, 0, 0) &&
+      pickerDialog.ClearCustomColorButton.IsEnabled &&
+      pickerDialog.CustomSlotFrames[0].BorderBrush == Brushes.Black &&
+      pickerDialog.CustomSlotStatusText.Text.Contains("第 1 格"),
+      "Window: clicking occupied slot 0 moves black frame, loads red, and enables clear button");
+
+     pickerDialog.Show();
+     pickerDialog.UpdateLayout();
+     SavePreview(Path.Combine(folder, "lyrics-color-picker-preview.png"), pickerDialog);
+
+     pickerDialog.ClickClearCustomColor();
+     int[] afterClear = pickerDialog.GetUpdatedCustomColors();
+     check(afterClear.Length == 16 && afterClear[0] == CustomColorPaletteState.EmptyColorRef &&
+      pickerDialog.SelectedCustomSlotIndex == 0 &&
+      !pickerDialog.ClearCustomColorButton.IsEnabled,
+      "Window: clearing slot 0 resets it to empty and keeps selection frame at slot 0");
+    } finally {
+     pickerDialog.Close();
+    }
+    check(!pickerDialog.IsVisible, "Window: custom color picker closes cleanly without lingering");
    } finally {
     settingsPanel.AppearanceChanged -= onAppearanceChanged;
     settingsPanel.ColorDialogPicker = null;
+    settingsPanel.CustomColorDialogPicker = null;
     CloseSettings();
    }
   }
@@ -452,7 +522,7 @@ namespace AMLyrics {
    hotkeyRegistered = true; lockHotkeyRegistered = true; UpdateHotkeyNotice(); Refresh();
    fake.Sample = new MediaSample { Status = "Error", Message = "Test error" }; Refresh(); check(current.Text == "媒体读取失败", "Window: media error state");
    fake.Sample = new MediaSample { ReceivedAtUtc = DateTime.UtcNow.AddSeconds(-5) }; Refresh(); check(current.Text == "媒体连接中断", "Window: stale media state");
-   CheckColorPickers(check);
+   CheckColorPickers(check, folder);
    HideWindow(); check(!IsVisible, "Window: hide"); RestoreWindow(); check(IsVisible, "Window: restore");
 
    var startupPreferences = new LyricsWindowPreferences {
@@ -460,7 +530,8 @@ namespace AMLyrics {
     Display = new LyricsDisplaySettings {
      FontSize = 37, ForegroundHex = "#4A91C3", FontFamilyName = "Consolas", FontWeightName = "粗体",
      StrokeHex = "#234567", BackgroundOpacity = 0.35, StrokeEnabled = false, ShadowEnabled = false, AnimateLongLines = false,
-     ShowTranslation = true, ShowRomanization = true
+     ShowTranslation = true, ShowRomanization = true,
+     CustomColors = new[] { 0x00336699, 0x00CC8844 }
     }
    };
    const string startupTrackKey = "smoke-startup-track";
@@ -504,8 +575,9 @@ namespace AMLyrics {
     "Window: manual startup preserves font and foreground color");
    check(display.StrokeHex == expectedDisplay.StrokeHex && display.BackgroundOpacity == expectedDisplay.BackgroundOpacity &&
     display.StrokeEnabled == expectedDisplay.StrokeEnabled && display.ShadowEnabled == expectedDisplay.ShadowEnabled && display.AnimateLongLines == expectedDisplay.AnimateLongLines &&
-    display.ShowTranslation == expectedDisplay.ShowTranslation && display.ShowRomanization == expectedDisplay.ShowRomanization,
-    "Window: manual startup preserves stroke, opacity and appearance switches");
+    display.ShowTranslation == expectedDisplay.ShowTranslation && display.ShowRomanization == expectedDisplay.ShowRomanization &&
+    LyricsDisplaySettings.CustomColorsEqual(display.CustomColors, expectedDisplay.CustomColors),
+    "Window: manual startup preserves stroke, opacity, custom colors and appearance switches");
    check(!startupStore.Current.Enabled && File.Exists(startupSettingsPath) && originalSettings.SequenceEqual(File.ReadAllBytes(startupSettingsPath)),
     "Window: manual startup leaves the source preferences unchanged and disabled");
 

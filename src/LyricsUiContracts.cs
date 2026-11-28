@@ -19,6 +19,29 @@ namespace AMLyrics {
   public bool AnimateLongLines = true;
   public bool ShowTranslation;
   public bool ShowRomanization;
+  public int[] CustomColors = new int[0];
+
+  public static int[] NormalizeCustomColors(int[] colors) {
+   if (colors == null || colors.Length == 0) return new int[0];
+   int[] normalized = new int[16];
+   bool hasNonWhite = false;
+   for (int i = 0; i < 16; i++) {
+    int c = i < colors.Length ? (colors[i] & 0x00FFFFFF) : 0x00FFFFFF;
+    normalized[i] = c;
+    if (c != 0x00FFFFFF) hasNonWhite = true;
+   }
+   return hasNonWhite ? normalized : new int[0];
+  }
+
+  public static bool CustomColorsEqual(int[] a, int[] b) {
+   int[] na = NormalizeCustomColors(a);
+   int[] nb = NormalizeCustomColors(b);
+   if (na.Length != nb.Length) return false;
+   for (int i = 0; i < na.Length; i++) {
+    if (na[i] != nb[i]) return false;
+   }
+   return true;
+  }
 
   public LyricsDisplaySettings Clone() {
    return new LyricsDisplaySettings {
@@ -26,7 +49,8 @@ namespace AMLyrics {
     FontWeightName = FontWeightName, StrokeHex = StrokeHex,
     BackgroundOpacity = BackgroundOpacity, StrokeEnabled = StrokeEnabled,
     ShadowEnabled = ShadowEnabled, AnimateLongLines = AnimateLongLines,
-    ShowTranslation = ShowTranslation, ShowRomanization = ShowRomanization
+    ShowTranslation = ShowTranslation, ShowRomanization = ShowRomanization,
+    CustomColors = NormalizeCustomColors(CustomColors)
    };
   }
 
@@ -37,6 +61,7 @@ namespace AMLyrics {
    if (string.IsNullOrWhiteSpace(FontFamilyName)) FontFamilyName = "Segoe UI";
    if (string.IsNullOrWhiteSpace(FontWeightName)) FontWeightName = "常规";
    if (string.IsNullOrWhiteSpace(StrokeHex)) StrokeHex = "#0F0F12";
+   CustomColors = NormalizeCustomColors(CustomColors);
   }
 
   static double Clamp(double value, double minimum, double maximum) {
