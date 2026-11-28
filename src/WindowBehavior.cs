@@ -431,7 +431,7 @@ namespace AMLyrics {
    }
   }
   internal async Task SmokeAsync(string folder, Action<bool,string> check) {
-   check(Topmost && MinWidth == 420 && MaxWidth == 1400 && MinHeight == 96 && MaxHeight == 220, "Window: topmost and bounded size");
+   check(Topmost && MinWidth == 420 && MaxWidth == 1400 && MinHeight == 64 && MaxHeight == 260, "Window: topmost and bounded size");
    bool hasTimingHotkeys = InputBindings.OfType<System.Windows.Input.KeyBinding>().Any(b =>
     b.Modifiers == System.Windows.Input.ModifierKeys.Control &&
     (b.Key == System.Windows.Input.Key.Left || b.Key == System.Windows.Input.Key.Right || b.Key == System.Windows.Input.Key.D0));
@@ -471,20 +471,29 @@ namespace AMLyrics {
     ((Button)overlayChrome.Toolbar.Children[2]).Content.ToString() == "×",
     "Window: toolbar is centered with settings, lock, and close buttons");
    check(ShouldShowChrome(false, true), "Window: keyboard focus reveals chrome when unlocked and settings are closed");
+   overlayChrome.SetHovered(false); overlayChrome.SetResizing(true); UpdateLayout();
+   bool frameDuringResize = overlayChrome.Frame.IsVisible && !overlayChrome.Toolbar.IsVisible;
+   overlayChrome.SetResizing(false); UpdateLayout();
+   check(frameDuringResize && !overlayChrome.Frame.IsVisible, "Window: edge resizing keeps backdrop frame visible without hover toolbar and hides after release");
+   overlayChrome.SetHovered(true); UpdateLayout();
    overlayChrome.SettingsButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
    UpdateLayout();
-   overlayChrome.Toolbar.MoveFocus(new System.Windows.Input.TraversalRequest(System.Windows.Input.FocusNavigationDirection.Next));
-   check(!overlayChrome.Frame.IsVisible && !overlayChrome.Toolbar.IsVisible && !overlayChrome.SettingsButton.IsVisible &&
-    !ShouldShowChrome(true, true) && ((SolidColorBrush)Background).Color.A == 0 && settingsPanel.IsVisible &&
+   overlayChrome.SetHovered(false); UpdateLayout();
+   check(overlayChrome.Frame.IsVisible && overlayChrome.Toolbar.IsVisible && overlayChrome.SettingsButton.IsVisible &&
+    ShouldShowChrome(false, false) && ((SolidColorBrush)Background).Color.A == 0 && settingsPanel.IsVisible &&
     settingsPanel.TranslationCheckBox != null && settingsPanel.RomanizationCheckBox != null,
-    "Window: opening settings hides all hover chrome and keeps it suppressed while pointer hovers over the overlay");
-   CloseSettings();
+    "Window: opening settings keeps backdrop frame and toolbar buttons visible even when pointer leaves the lyric box");
+   overlayChrome.SettingsButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+   UpdateLayout();
+   check(!settingsPanel.IsVisible && !overlayChrome.Frame.IsVisible && !overlayChrome.Toolbar.IsVisible,
+    "Window: clicking settings button again closes settings and hides chrome when pointer is away");
    SetLocked(true); overlayChrome.SetHovered(ShouldShowChrome(true, false)); UpdateLayout();
    check(overlayChrome.IsLocked && overlayChrome.Frame.Visibility == Visibility.Collapsed &&
     overlayChrome.Toolbar.Visibility == Visibility.Collapsed && overlayChrome.UnlockButton.Visibility == Visibility.Visible &&
     overlayChrome.UnlockButton.Content.ToString() == "🔓" &&
     overlayChrome.UnlockButton.IsEnabled && hitTestBridge.IsClickThrough &&
-    !leftResizeHandle.IsHitTestVisible && !rightResizeHandle.IsHitTestVisible,
+    !leftResizeHandle.IsHitTestVisible && !rightResizeHandle.IsHitTestVisible &&
+    !topResizeHandle.IsHitTestVisible && !bottomResizeHandle.IsHitTestVisible,
     "Window: locked state keeps main overlay click-through while showing a clickable popup unlock button");
    SavePreview(Path.Combine(folder, "lyrics-locked-preview.png"));
    overlayChrome.SetHovered(ShouldShowChrome(false, true)); UpdateLayout();
@@ -499,7 +508,7 @@ namespace AMLyrics {
     overlayChrome.Toolbar.Visibility == Visibility.Visible && overlayChrome.UnlockButton.Visibility == Visibility.Collapsed &&
     overlayChrome.LockButton.IsEnabled && !hitTestBridge.IsClickThrough,
     "Window: clicking popup unlock restores the toolbar, lyric frame, and hit testing");
-   ResizeLyrics(100); check(current.RequestedFontSize == 48, "Window: maximum font size");
+   ResizeLyrics(100); check(current.RequestedFontSize == 60, "Window: maximum font size");
    Width = LyricsLayoutMetrics.MinimumWidth;
    CheckDockedLyrics(folder, "max-narrow", check);
    CheckLyricLayout(folder, "max-narrow", check);
@@ -513,10 +522,38 @@ namespace AMLyrics {
     settingsPanel.SwitchVersionButton != null && settingsPanel.EarlierLargeButton != null && settingsPanel.LaterLargeButton != null &&
     Math.Abs(ActualHeight - lyricHeightBeforeSettings) < 0.1, "Window: settings panel is a visible floating layer without changing lyric height");
    CloseSettings();
+   Rect settingsWorkArea = SystemParameters.WorkArea;
+   Top = settingsWorkArea.Top; KeepWindowVisible(); UpdateLayout();
+   OpenSettings();
+   Dispatcher.Invoke(new Action(() => { }), System.Windows.Threading.DispatcherPriority.ContextIdle);
+   double toolbarBottomNearTop = overlayChrome.HoverToolbarSurface.PointToScreen(new Point(0, overlayChrome.HoverToolbarSurface.ActualHeight)).Y;
+   double popupTopNearTop = settingsPanel.PopupSurface.PointToScreen(new Point(0, 0)).Y;
+   check(popupTopNearTop >= toolbarBottomNearTop + 1,
+    "Window: settings popup opens below lyrics and clears bottom toolbar when top-docked");
+   ResizeLyrics(-30); UpdateLayout();
+   Dispatcher.Invoke(new Action(() => { }), System.Windows.Threading.DispatcherPriority.ContextIdle);
+   double popupTopAfterShrink = settingsPanel.PopupSurface.PointToScreen(new Point(0, 0)).Y;
+   ResizeLyrics(30); UpdateLayout();
+   Dispatcher.Invoke(new Action(() => { }), System.Windows.Threading.DispatcherPriority.ContextIdle);
+   double toolbarBottomAfterGrow = overlayChrome.HoverToolbarSurface.PointToScreen(new Point(0, overlayChrome.HoverToolbarSurface.ActualHeight)).Y;
+   double popupTopAfterGrow = settingsPanel.PopupSurface.PointToScreen(new Point(0, 0)).Y;
+   check(popupTopAfterGrow > popupTopAfterShrink && popupTopAfterGrow >= toolbarBottomAfterGrow + 1,
+    "Window: settings popup repositions below resized lyrics and toolbar without overlapping");
+   CloseSettings();
+
+   Top = settingsWorkArea.Bottom - ActualHeight - 10; KeepWindowVisible(); UpdateLayout();
+   OpenSettings();
+   Dispatcher.Invoke(new Action(() => { }), System.Windows.Threading.DispatcherPriority.ContextIdle);
+   double toolbarTopNearBottom = overlayChrome.HoverToolbarSurface.PointToScreen(new Point(0, 0)).Y;
+   double popupBottomNearBottom = settingsPanel.PopupSurface.PointToScreen(new Point(0, settingsPanel.PopupSurface.ActualHeight)).Y;
+   check(popupBottomNearBottom <= toolbarTopNearBottom - 1,
+    "Window: settings popup flips above lyrics and clears top toolbar when bottom space is insufficient");
+   CloseSettings();
+   Top = settingsWorkArea.Top + 80; KeepWindowVisible(); UpdateLayout();
    overlayChrome.SetHovered(false);
    current.Text = "你愛我還是他你愛我還是他";
    UpdateLayout();
-   check(current.Presentation.FontSize == 48 && current.Presentation.FontSize > next.Presentation.FontSize &&
+   check(current.Presentation.FontSize == 60 && current.Presentation.FontSize > next.Presentation.FontSize &&
     current.Presentation.Overflow > 0 &&
     current.Presentation.Mode == (SystemParameters.ClientAreaAnimation ? LyricsLongLineMode.Marquee : LyricsLongLineMode.Ellipsis) &&
     FitsTrackVertically(current),
@@ -524,15 +561,56 @@ namespace AMLyrics {
    current.Text = string.Concat(System.Linq.Enumerable.Repeat("你愛我還是他", 12));
    current.AnimateLongLines = false;
    UpdateLayout();
-   check(current.Presentation.FontSize == 48 && current.Presentation.Mode == LyricsLongLineMode.Ellipsis && FitsTrackVertically(current), "Window: long lyrics ellipsize at requested font size when animation is off");
+   check(current.Presentation.FontSize == 60 && current.Presentation.Mode == LyricsLongLineMode.Ellipsis && FitsTrackVertically(current), "Window: long lyrics ellipsize at requested font size when animation is off");
    current.AnimateLongLines = true;
    UpdateLayout();
-   check(current.Presentation.FontSize == 48 && current.Presentation.Mode == (SystemParameters.ClientAreaAnimation ? LyricsLongLineMode.Marquee : LyricsLongLineMode.Ellipsis) && FitsTrackVertically(current),
+   check(current.Presentation.FontSize == 60 && current.Presentation.Mode == (SystemParameters.ClientAreaAnimation ? LyricsLongLineMode.Marquee : LyricsLongLineMode.Ellipsis) && FitsTrackVertically(current),
     "Window: long lyrics respect the system animation setting");
-   ResizeLyrics(-100); check(current.RequestedFontSize == 16, "Window: minimum font size");
+   ResizeLyrics(-100);
+   check(current.RequestedFontSize == 20 && next.Presentation.FontSize < current.Presentation.FontSize &&
+    next.Presentation.FontSize >= LyricsLayoutMetrics.MinimumSecondaryFontSize,
+    "Window: minimum font size 20 preserves secondary hierarchy");
+
    Width = LyricsLayoutMetrics.DefaultWidth;
    displaySettings.FontSize = LyricsLayoutMetrics.DefaultFontSize;
-   ApplyDisplaySettings();
+   ApplyDisplaySettings(); UpdateLayout(); KeepWindowVisible();
+   double widthBeforeVerticalResize = Width;
+   double bottomBeforeTopDrag = Top + ActualHeight;
+   double heightBeforeTopDrag = ActualHeight;
+   StartResizeSession(ResizeEdge.Top, new Point(0, 0));
+   ApplyResizeDelta(0, -40);
+   bool topDragFrameVisible = overlayChrome.Frame.IsVisible && !overlayChrome.Toolbar.IsVisible;
+   FinishResize(true);
+   check(topDragFrameVisible && !overlayChrome.Frame.IsVisible &&
+    displaySettings.FontSize > LyricsLayoutMetrics.DefaultFontSize &&
+    ActualHeight > heightBeforeTopDrag &&
+    Math.Abs(Width - widthBeforeVerticalResize) < 0.1 &&
+    Math.Abs((Top + ActualHeight) - bottomBeforeTopDrag) < 1.5,
+    "Window: top-edge drag increases font size and height while anchoring bottom edge and preserving width");
+
+   double topBeforeBottomDrag = Top;
+   double sizeBeforeBottomDrag = displaySettings.FontSize;
+   StartResizeSession(ResizeEdge.Bottom, new Point(0, 0));
+   ApplyResizeDelta(0, -35);
+   FinishResize(true);
+   check(displaySettings.FontSize < sizeBeforeBottomDrag &&
+    Math.Abs(Width - widthBeforeVerticalResize) < 0.1 &&
+    Math.Abs(Top - topBeforeBottomDrag) < 1.5,
+    "Window: bottom-edge drag shrinks font size and height while anchoring top edge and preserving width");
+
+   double fontBeforeHorizontalDrag = displaySettings.FontSize;
+   double leftBeforeLeftDrag = Left;
+   StartResizeSession(ResizeEdge.Left, new Point(0, 0));
+   ApplyResizeDelta(60, 0);
+   FinishResize(true);
+   check(Math.Abs(Width - (widthBeforeVerticalResize - 60)) < 0.5 &&
+    Math.Abs(Left - (leftBeforeLeftDrag + 60)) < 0.5 &&
+    Math.Abs(displaySettings.FontSize - fontBeforeHorizontalDrag) < 0.01,
+    "Window: horizontal edge drag changes only width and left position without altering font size");
+
+   Width = LyricsLayoutMetrics.DefaultWidth;
+   displaySettings.FontSize = LyricsLayoutMetrics.DefaultFontSize;
+   ApplyDisplaySettings(); KeepWindowVisible();
    var triSmokeDoc = new LyricDocument {
     IsSynchronized = true, Source = "三轨验证",
     Lines = new System.Collections.Generic.List<LyricLine> {

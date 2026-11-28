@@ -46,6 +46,8 @@ namespace AMLyrics {
   readonly Grid contentRoot;
   readonly Border leftResizeHandle;
   readonly Border rightResizeHandle;
+  readonly Border topResizeHandle;
+  readonly Border bottomResizeHandle;
   int attempts;
   double selectedDuration;
   DateTime retryAt = DateTime.MaxValue;
@@ -63,12 +65,16 @@ namespace AMLyrics {
   IntPtr handle;
   bool hotkeyRegistered;
   bool lockHotkeyRegistered;
+  internal enum ResizeEdge { Left, Right, Top, Bottom }
   bool dragging;
   bool resizing;
-  bool resizingLeft;
+  ResizeEdge resizingEdge;
   Point resizeStartScreen;
   double resizeStartWidth;
   double resizeStartLeft;
+  double resizeStartHeight;
+  double resizeStartBottom;
+  double resizeStartFontSize;
   Task pendingSelection = Task.FromResult(0);
   [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint key);
   [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr hwnd, int id);
@@ -98,7 +104,7 @@ namespace AMLyrics {
    overlayChrome = new LyricsOverlayChrome();
    settingsPanel = new LyricsSettingsPanel(RetryLyrics, () => { var ignored = ImportAsync(); }, (delta) => ChangeTiming(delta, false), () => ChangeTiming(0, true), () => { var ignored = SwitchLyricsVersionAsync(); });
    hitTestBridge = new LyricsHitTestBridge(this);
-   overlayChrome.SettingsRequested += (s,e) => OpenSettings();
+   overlayChrome.SettingsRequested += (s,e) => { if (settingsPanel.Visibility == Visibility.Visible) CloseSettings(); else OpenSettings(); };
    overlayChrome.ToggleLockRequested += (s,e) => SetLocked(!overlayChrome.IsLocked);
    overlayChrome.CloseRequested += (s,e) => SetEnabled(false);
    settingsPanel.DismissRequested += (s,e) => CloseSettings();
@@ -141,13 +147,20 @@ namespace AMLyrics {
     e.Handled = true;
    };
 
-   leftResizeHandle = MakeResizeHandle(true);
-   rightResizeHandle = MakeResizeHandle(false);
+   leftResizeHandle = MakeResizeHandle(ResizeEdge.Left);
+   rightResizeHandle = MakeResizeHandle(ResizeEdge.Right);
+   topResizeHandle = MakeResizeHandle(ResizeEdge.Top);
+   bottomResizeHandle = MakeResizeHandle(ResizeEdge.Bottom);
    contentRoot.Children.Add(leftResizeHandle);
    contentRoot.Children.Add(rightResizeHandle);
+   contentRoot.Children.Add(topResizeHandle);
+   contentRoot.Children.Add(bottomResizeHandle);
    Grid.SetZIndex(leftResizeHandle, 30); Grid.SetZIndex(rightResizeHandle, 30);
+   Grid.SetZIndex(topResizeHandle, 30); Grid.SetZIndex(bottomResizeHandle, 30);
    settingsPanel.Visibility = Visibility.Collapsed;
    settingsPanel.Margin = new Thickness(12);
+   settingsPanel.AnchorTarget = contentRoot;
+   settingsPanel.ToolbarSurface = overlayChrome.HoverToolbarSurface;
    var settingsLayer = new Canvas();
    Canvas.SetRight(settingsPanel, 0); Canvas.SetTop(settingsPanel, 0);
    settingsLayer.Children.Add(settingsPanel);
@@ -189,7 +202,13 @@ namespace AMLyrics {
     Refresh();
    };
    IsVisibleChanged += (s,e) => { if (!IsVisible) overlayChrome.SetHovered(false); };
-   SizeChanged += (s,e) => { if (e.HeightChanged) KeepWindowVisible(); };
+   SizeChanged += (s,e) => {
+    if (e.HeightChanged) KeepWindowVisible();
+    if (settingsPanel.Visibility == Visibility.Visible) { overlayChrome.RepositionToolbar(); settingsPanel.RepositionPopup(); }
+   };
+   LocationChanged += (s,e) => {
+    if (settingsPanel.Visibility == Visibility.Visible) { overlayChrome.RepositionToolbar(); settingsPanel.RepositionPopup(); }
+   };
    Loaded += (s,e) => {
     InitializeStartupState();
     ApplyDisplaySettings();
@@ -212,30 +231,76 @@ namespace AMLyrics {
     } catch { }
    };
   }
-  Border MakeResizeHandle(bool left) {
-   var handle = new Border { Width = 8, Background = Brushes.Transparent, HorizontalAlignment = left ? HorizontalAlignment.Left : HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Stretch, Cursor = Cursors.SizeWE, Focusable = false };
-   handle.MouseLeftButtonDown += (s,e) => BeginResize(left, e);
+  Border MakeResizeHandle(ResizeEdge edge) {
+   bool horizontal = edge == ResizeEdge.Left || edge == ResizeEdge.Right;
+   var handle = new Border {
+    Background = Brushes.Transparent,
+    HorizontalAlignment = horizontal ? (edge == ResizeEdge.Left ? HorizontalAlignment.Left : HorizontalAlignment.Right) : HorizontalAlignment.Stretch,
+    VerticalAlignment = horizontal ? VerticalAlignment.Stretch : (edge == ResizeEdge.Top ? VerticalAlignment.Top : VerticalAlignment.Bottom),
+    Cursor = horizontal ? Cursors.SizeWE : Cursors.SizeNS,
+    Focusable = false
+   };
+   if (horizontal) handle.Width = 8;
+   else { handle.Height = 8; handle.Margin = new Thickness(8, 0, 8, 0); }
+   handle.MouseLeftButtonDown += (s,e) => BeginResize(edge, e);
    handle.MouseMove += (s,e) => ContinueResize(e);
    handle.MouseLeftButtonUp += (s,e) => EndResize(e);
+   handle.LostMouseCapture += (s,e) => FinishResize(false);
    return handle;
   }
-  void BeginResize(bool left, MouseButtonEventArgs e) {
+  void BeginResize(ResizeEdge edge, MouseButtonEventArgs e) {
    if (overlayChrome.IsLocked || settingsPanel.Visibility == Visibility.Visible) return;
-   resizing = true; resizingLeft = left; resizeStartWidth = Width; resizeStartLeft = Left;
-   resizeStartScreen = PointToScreen(e.GetPosition(this));
+   StartResizeSession(edge, PointToScreen(e.GetPosition(this)));
    ((UIElement)e.Source).CaptureMouse(); e.Handled = true;
+  }
+  internal void StartResizeSession(ResizeEdge edge, Point startScreen) {
+   resizing = true; resizingEdge = edge; resizeStartWidth = Width; resizeStartLeft = Left;
+   resizeStartHeight = ActualHeight > 0 ? ActualHeight : MinHeight;
+   resizeStartBottom = Top + resizeStartHeight;
+   resizeStartFontSize = lyricSize;
+   resizeStartScreen = startScreen;
+   overlayChrome.SetResizing(true);
+  }
+  internal void ApplyResizeDelta(double deltaX, double deltaY) {
+   if (!resizing) return;
+   if (resizingEdge == ResizeEdge.Left || resizingEdge == ResizeEdge.Right) {
+    double width = LyricsLayoutMetrics.ClampWidth(resizingEdge == ResizeEdge.Left ? resizeStartWidth - deltaX : resizeStartWidth + deltaX);
+    if (resizingEdge == ResizeEdge.Left) Left = resizeStartLeft + (resizeStartWidth - width);
+    Width = width;
+   } else {
+    double updatedFontSize = LyricsLayoutMetrics.ComputeVerticalResizeFontSize(resizeStartFontSize, resizeStartHeight, deltaY, resizingEdge == ResizeEdge.Top);
+    if (Math.Abs(updatedFontSize - lyricSize) > 0.01 || Math.Abs(displaySettings.FontSize - updatedFontSize) > 0.01) {
+     displaySettings.FontSize = updatedFontSize;
+     ApplyDisplaySettings();
+     UpdateLayout();
+    }
+    if (resizingEdge == ResizeEdge.Top) {
+     double currentHeight = ActualHeight > 0 ? ActualHeight : resizeStartHeight;
+     Top = resizeStartBottom - currentHeight;
+    }
+   }
+   KeepWindowVisible();
   }
   void ContinueResize(MouseEventArgs e) {
    if (!resizing) return;
    Point currentScreen = PointToScreen(e.GetPosition(this));
-   double delta = currentScreen.X - resizeStartScreen.X;
-   double width = LyricsLayoutMetrics.ClampWidth(resizingLeft ? resizeStartWidth - delta : resizeStartWidth + delta);
-   if (resizingLeft) Left = resizeStartLeft + (resizeStartWidth - width);
-   Width = width; KeepWindowVisible(); e.Handled = true;
+   DpiScale dpi = VisualTreeHelper.GetDpi(this);
+   double scaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1;
+   double scaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1;
+   ApplyResizeDelta((currentScreen.X - resizeStartScreen.X) / scaleX, (currentScreen.Y - resizeStartScreen.Y) / scaleY);
+   e.Handled = true;
   }
   void EndResize(MouseButtonEventArgs e) {
    if (!resizing) return;
-   resizing = false; Mouse.Capture(null); KeepWindowVisible(); SavePreferences(); e.Handled = true;
+   FinishResize(true);
+   e.Handled = true;
+  }
+  internal void FinishResize(bool releaseCapture) {
+   if (!resizing) return;
+   resizing = false;
+   overlayChrome.SetResizing(false);
+   if (releaseCapture) Mouse.Capture(null);
+   KeepWindowVisible(); SavePreferences(); UpdateHoverChrome();
   }
   internal bool ShouldStartVisible { get { return smokeMode || userEnabled; } }
   internal void InitializeStartupState() {
@@ -318,22 +383,34 @@ namespace AMLyrics {
   }
   void OpenSettings() {
    if (overlayChrome.IsLocked) return;
-   overlayChrome.SetHovered(false);
+   FinishResize(true);
+   overlayChrome.SetSettingsOpen(true);
    settingsPanel.Visibility = Visibility.Visible;
    hitTestBridge.SetClickThrough(false);
    UpdateLayout();
+   overlayChrome.RepositionToolbar();
+   settingsPanel.RepositionPopup();
+   Dispatcher.BeginInvoke(new Action(() => {
+    if (settingsPanel.Visibility == Visibility.Visible) {
+     overlayChrome.RepositionToolbar();
+     settingsPanel.RepositionPopup();
+    }
+   }), System.Windows.Threading.DispatcherPriority.Loaded);
    settingsPanel.FocusFirstControl();
   }
   void CloseSettings() {
    settingsPanel.Visibility = Visibility.Collapsed;
+   overlayChrome.SetSettingsOpen(false);
    hitTestBridge.SetClickThrough(overlayChrome.IsLocked);
+   if (!(smokeMode && media is TestMediaSource)) UpdateHoverChrome();
   }
   void CloseSettingsOrHide() { if (settingsPanel.Visibility == Visibility.Visible) CloseSettings(); else SetEnabled(false); }
   void SetLocked(bool value) {
-   if (value) CloseSettings();
+   if (value) { FinishResize(true); CloseSettings(); }
    overlayChrome.SetLocked(value);
    hitTestBridge.SetClickThrough(value);
    leftResizeHandle.IsHitTestVisible = !value; rightResizeHandle.IsHitTestVisible = !value;
+   topResizeHandle.IsHitTestVisible = !value; bottomResizeHandle.IsHitTestVisible = !value;
    UpdateTrayLockMenuItem();
    SavePreferences();
   }
@@ -347,7 +424,8 @@ namespace AMLyrics {
    else hotkeyNotice = string.Empty;
   }
   internal bool ShouldShowChrome(bool pointerInside, bool keyboardFocused) {
-   if (dragging || resizing || settingsPanel.Visibility == Visibility.Visible) return false;
+   if (dragging || resizing) return false;
+   if (settingsPanel.Visibility == Visibility.Visible) return !overlayChrome.IsLocked;
    if (overlayChrome.IsLocked) return pointerInside;
    return pointerInside || keyboardFocused;
   }
@@ -479,7 +557,7 @@ namespace AMLyrics {
    return IntPtr.Zero;
   }
   public void RestoreWindow() { Refresh(); Show(); WindowState = WindowState.Normal; KeepWindowVisible(); if (ShowActivated) Activate(); }
-  void HideWindow() { CloseSettings(); Hide(); }
+  void HideWindow() { FinishResize(true); CloseSettings(); Hide(); }
   void ResizeLyrics(double delta) { lyricSize = LyricsLayoutMetrics.ClampFontSize(lyricSize + delta); displaySettings.FontSize = lyricSize; ApplyDisplaySettings(); SavePreferences(); }
  }
 }

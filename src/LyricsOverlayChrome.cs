@@ -41,7 +41,7 @@ namespace AMLyrics {
   }
   public double RequestedFontSize {
    get { return requestedFontSize; }
-   set { double updated = LyricsLayoutMetrics.ClampFontSize(value); if (requestedFontSize != updated) { requestedFontSize = updated; RefreshLayout(); } }
+   set { double updated = LyricsLayoutMetrics.ClampTrackFontSize(value); if (requestedFontSize != updated) { requestedFontSize = updated; RefreshLayout(); } }
   }
   public bool AnimateLongLines {
    get { return animateLongLines; }
@@ -167,6 +167,8 @@ namespace AMLyrics {
   readonly List<Button> interactiveButtons = new List<Button>();
   bool locked;
   bool hovered;
+  bool resizing;
+  bool settingsOpen;
 
   public LyricsOverlayChrome() {
    Background = Brushes.Transparent;
@@ -243,19 +245,38 @@ namespace AMLyrics {
     hovered = value;
     UpdateVisibility();
    }
+   internal void SetResizing(bool value) {
+    if (resizing == value) return;
+    resizing = value;
+    UpdateVisibility();
+   }
+   internal void SetSettingsOpen(bool value) {
+    if (settingsOpen == value) return;
+    settingsOpen = value;
+    UpdateVisibility();
+   }
+   internal void RepositionToolbar() {
+    if (toolbarPopup == null || !toolbarPopup.IsOpen) return;
+    double offset = toolbarPopup.HorizontalOffset;
+    toolbarPopup.HorizontalOffset = offset + 0.1;
+    toolbarPopup.HorizontalOffset = offset;
+   }
    internal void SetBackdropOpacity(double opacity) {
     byte alpha = (byte)Math.Round(158 + (255 - 158) * opacity);
     frame.Background = new SolidColorBrush(Color.FromArgb(alpha, 10, 11, 15));
    }
    public void SetLocked(bool value) {
     locked = value;
+    if (locked) { resizing = false; settingsOpen = false; }
     UpdateButtonStates();
     UpdateVisibility();
    }
    void UpdateVisibility() {
-    frame.Visibility = buttonPanel.Visibility = hovered && !locked ? Visibility.Visible : Visibility.Collapsed;
+    bool showUnlockedControls = (hovered || settingsOpen) && !resizing && !locked;
+    frame.Visibility = (hovered || resizing || settingsOpen) && !locked ? Visibility.Visible : Visibility.Collapsed;
+    buttonPanel.Visibility = showUnlockedControls ? Visibility.Visible : Visibility.Collapsed;
     unlockButton.Visibility = hovered && locked ? Visibility.Visible : Visibility.Collapsed;
-    toolbarPopup.IsOpen = hovered;
+    toolbarPopup.IsOpen = showUnlockedControls || (hovered && locked && !resizing);
    }
 
   Button MakeButton(string glyph, string name, Action action) {
@@ -266,7 +287,7 @@ namespace AMLyrics {
    AutomationProperties.SetName(button, name);
    button.Click += (s, e) => {
     bool unlock = button == unlockButton;
-    if (hovered && (unlock || !locked) && button.IsEnabled && action != null) action();
+    if ((unlock ? hovered : (hovered || settingsOpen)) && (unlock || !locked) && button.IsEnabled && action != null) action();
    };
    return button;
   }

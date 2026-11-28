@@ -35,7 +35,7 @@ namespace AMLyrics {
    if (measure == null) throw new ArgumentNullException("measure");
    text = text ?? "";
    availableWidth = Math.Max(1, availableWidth);
-   double fontSize = Clamp(requestedFontSize, LyricsDisplaySettings.MinimumFontSize, LyricsDisplaySettings.MaximumFontSize);
+   double fontSize = LyricsLayoutMetrics.ClampTrackFontSize(requestedFontSize);
    if (text.Length == 0) return new LyricsLinePresentation(text, fontSize, LyricsLongLineMode.Fit, 0, TimeSpan.Zero);
 
    double measured = Math.Max(0, measure(text, fontSize));
@@ -79,12 +79,13 @@ namespace AMLyrics {
   public const double MinimumWidth = 420;
   public const double MaximumWidth = 1400;
   public const double DefaultWidth = 760;
-  public const double MinimumHeight = 96;
-  public const double MaximumHeight = 220;
-  public const double MaximumThreeTrackHeight = 290;
+  public const double MinimumHeight = 64;
+  public const double MaximumHeight = 260;
+  public const double MaximumThreeTrackHeight = 340;
   public const double DefaultFontSize = 30;
-  public const double MinimumFontSize = 16;
-  public const double MaximumFontSize = 48;
+  public const double MinimumFontSize = 20;
+  public const double MaximumFontSize = 60;
+  public const double MinimumSecondaryFontSize = 14;
   public const double HorizontalPadding = 22;
   public const double TrackGap = 4;
   public const double CompactTrackGap = 2;
@@ -93,11 +94,18 @@ namespace AMLyrics {
 
   public static double ClampWidth(double width) { return Clamp(width, MinimumWidth, MaximumWidth); }
   public static double ClampFontSize(double size) { return Clamp(size, MinimumFontSize, MaximumFontSize); }
-  public static double NextLineFontSize(double currentSize) { return Math.Max(MinimumFontSize, ClampFontSize(currentSize) * NextLineScale); }
+  public static double ClampTrackFontSize(double size) { return Clamp(size, MinimumSecondaryFontSize, MaximumFontSize); }
+  public static double NextLineFontSize(double currentSize) { return Math.Max(MinimumSecondaryFontSize, ClampFontSize(currentSize) * NextLineScale); }
   public static double SecondaryThreeTrackFontSize(double currentSize) {
    double clamped = ClampFontSize(currentSize);
-   double scaled = Math.Max(MinimumFontSize, clamped * SecondaryThreeTrackScale);
-   return clamped > MinimumFontSize ? Math.Min(clamped - 1, scaled) : MinimumFontSize;
+   double scaled = Math.Max(MinimumSecondaryFontSize, clamped * SecondaryThreeTrackScale);
+   return clamped > MinimumSecondaryFontSize ? Math.Min(clamped - 1, scaled) : MinimumSecondaryFontSize;
+  }
+  public static double ComputeVerticalResizeFontSize(double startFontSize, double startHeight, double deltaY, bool topEdge) {
+   double safeStartSize = ClampFontSize(startFontSize);
+   if (startHeight <= 0) return safeStartSize;
+   double targetHeight = topEdge ? startHeight - deltaY : startHeight + deltaY;
+   return ClampFontSize(Math.Round(safeStartSize * (targetHeight / startHeight), 1));
   }
 
   static double Clamp(double value, double minimum, double maximum) {

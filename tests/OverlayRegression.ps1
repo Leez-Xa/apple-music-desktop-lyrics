@@ -105,9 +105,9 @@ function Assert-HoverComposite($Idle, $Hover, $Bands, [string]$Label) {
 }
 
 function Test-OverlayPair($Idle, $Hover, [int]$ExpectedWidth, [string]$Label) {
- if ($Idle.Width -ne $ExpectedWidth -or $Idle.Height -lt 96 -or $Idle.Height -gt 220 -or
+ if ($Idle.Width -ne $ExpectedWidth -or $Idle.Height -lt 64 -or $Idle.Height -gt 260 -or
      $Hover.Width -ne $Idle.Width -or $Hover.Height -ne $Idle.Height) {
-  throw "${Label}: expected ${ExpectedWidth}px width, height within 96-220px, and matching idle/hover dimensions; got $($Idle.Width)x$($Idle.Height) and $($Hover.Width)x$($Hover.Height)."
+  throw "${Label}: expected ${ExpectedWidth}px width, height within 64-260px, and matching idle/hover dimensions; got $($Idle.Width)x$($Idle.Height) and $($Hover.Width)x$($Hover.Height)."
  }
  $bands = @(Get-LyricBands $Idle)
  if ($bands.Count -ne 2) { throw "${Label}: expected exactly two nontransparent lyric bands in idle, found $($bands.Count)." }

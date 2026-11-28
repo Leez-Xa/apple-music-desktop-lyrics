@@ -10,6 +10,27 @@ using DrawingColor = System.Drawing.Color;
 using Forms = System.Windows.Forms;
 
 namespace AMLyrics {
+ public static class LyricsSettingsPopupPlacement {
+  public const double PopupGapDip = 8;
+  public static bool ShouldPlaceAbove(double targetTopDip, double targetBottomDip, double popupHeightDip, double gapDip, double workAreaTopDip, double workAreaBottomDip) {
+   return ShouldPlaceAbove(targetTopDip, targetBottomDip, popupHeightDip, gapDip, workAreaTopDip, workAreaBottomDip, 0, 0);
+  }
+  public static bool ShouldPlaceAbove(double targetTopDip, double targetBottomDip, double popupHeightDip, double gapDip, double workAreaTopDip, double workAreaBottomDip, double belowClearanceDip, double aboveClearanceDip) {
+   double neededBelow = popupHeightDip + belowClearanceDip + gapDip;
+   double spaceBelow = workAreaBottomDip - targetBottomDip;
+   double spaceAbove = targetTopDip - workAreaTopDip;
+   return spaceBelow < neededBelow && (spaceAbove - aboveClearanceDip) >= (spaceBelow - belowClearanceDip);
+  }
+  public static CustomPopupPlacement[] ComputePlacements(Size popupSize, Size targetSize, double gapPixels, bool preferAbove) {
+   return ComputePlacements(popupSize, targetSize, gapPixels, preferAbove, 0, 0);
+  }
+  public static CustomPopupPlacement[] ComputePlacements(Size popupSize, Size targetSize, double gapPixels, bool preferAbove, double belowClearancePixels, double aboveClearancePixels) {
+   double left = Math.Round((targetSize.Width - popupSize.Width) / 2);
+   var below = new CustomPopupPlacement(new Point(left, targetSize.Height + belowClearancePixels + gapPixels), PopupPrimaryAxis.Horizontal);
+   var above = new CustomPopupPlacement(new Point(left, -popupSize.Height - aboveClearancePixels - gapPixels), PopupPrimaryAxis.Horizontal);
+   return preferAbove ? new[] { above, below } : new[] { below, above };
+  }
+ }
  public sealed class LyricsSettingsPanel : Border {
   sealed class ColorField {
    internal string Label;
@@ -60,6 +81,7 @@ namespace AMLyrics {
   readonly Action resetTiming;
   readonly Action switchVersion;
   bool applyingAppearance;
+  internal const double PopupGapDip = 8;
   bool colorDialogOpen;
 
   int[] customColors = new int[0];
@@ -83,7 +105,7 @@ namespace AMLyrics {
     CornerRadius = new CornerRadius(10), Padding = new Thickness(14), SnapsToDevicePixels = true
    };
    popup = new Popup {
-    Child = surface, PlacementTarget = this, Placement = PlacementMode.Relative,
+    Child = surface, PlacementTarget = this, Placement = PlacementMode.Custom, CustomPopupPlacementCallback = PlacePopup,
     HorizontalOffset = 0, VerticalOffset = 0, StaysOpen = true, AllowsTransparency = true, Focusable = false
    };
    Grid host = new Grid { Width = Width, Height = Height, IsHitTestVisible = false };
@@ -201,6 +223,46 @@ namespace AMLyrics {
   public TextBox ForegroundColorBox { get { return foregroundColor.Box; } }
   public TextBox StrokeColorBox { get { return strokeColor.Box; } }
   internal Border PopupSurface { get { return surface; } }
+  internal UIElement AnchorTarget {
+   get { return popup.PlacementTarget; }
+   set { popup.PlacementTarget = value ?? this; }
+  }
+  internal FrameworkElement ToolbarSurface { get; set; }
+  internal void RepositionPopup() {
+   if (popup == null || !popup.IsOpen) return;
+   double offset = popup.HorizontalOffset;
+   popup.HorizontalOffset = offset + 0.1;
+   popup.HorizontalOffset = offset;
+  }
+  CustomPopupPlacement[] PlacePopup(Size popupSize, Size targetSize, Point offset) {
+   var targetVisual = popup.PlacementTarget as Visual ?? this;
+   DpiScale dpi = VisualTreeHelper.GetDpi(targetVisual);
+   double scaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1;
+   double gapPixels = Math.Round(LyricsSettingsPopupPlacement.PopupGapDip * scaleY);
+   bool preferAbove = false;
+   double belowClearancePx = 0;
+   double aboveClearancePx = 0;
+   if (PresentationSource.FromVisual(targetVisual) != null) {
+    Point originPx = targetVisual.PointToScreen(new Point(0, 0));
+    double targetTopPx = originPx.Y;
+    double targetBottomPx = originPx.Y + targetSize.Height;
+    if (ToolbarSurface != null && ToolbarSurface.IsVisible && PresentationSource.FromVisual(ToolbarSurface) != null && ToolbarSurface.ActualHeight > 0) {
+     double toolbarTopPx = ToolbarSurface.PointToScreen(new Point(0, 0)).Y;
+     double toolbarBottomPx = toolbarTopPx + ToolbarSurface.ActualHeight * scaleY;
+     if (toolbarTopPx >= targetBottomPx - 2) belowClearancePx = Math.Max(0, toolbarBottomPx - targetBottomPx);
+     else if (toolbarBottomPx <= targetTopPx + 2) aboveClearancePx = Math.Max(0, targetTopPx - toolbarTopPx);
+    }
+    double targetTopDip = targetTopPx / scaleY;
+    double targetBottomDip = targetBottomPx / scaleY;
+    double popupHeightDip = popupSize.Height / scaleY;
+    var screen = Forms.Screen.FromPoint(new System.Drawing.Point((int)Math.Round(originPx.X + targetSize.Width / 2), (int)Math.Round(originPx.Y + targetSize.Height / 2)));
+    var working = screen != null ? screen.WorkingArea : System.Drawing.Rectangle.Empty;
+    double workTopDip = working.IsEmpty ? SystemParameters.WorkArea.Top : working.Top / scaleY;
+    double workBottomDip = working.IsEmpty ? SystemParameters.WorkArea.Bottom : working.Bottom / scaleY;
+    preferAbove = LyricsSettingsPopupPlacement.ShouldPlaceAbove(targetTopDip, targetBottomDip, popupHeightDip, LyricsSettingsPopupPlacement.PopupGapDip, workTopDip, workBottomDip, belowClearancePx / scaleY, aboveClearancePx / scaleY);
+   }
+   return LyricsSettingsPopupPlacement.ComputePlacements(popupSize, targetSize, gapPixels, preferAbove, belowClearancePx, aboveClearancePx);
+  }
   internal TabControl SectionTabs { get { return sectionTabs; } }
   internal Button SwitchVersionButton { get { return switchVersionButton; } }
   internal Button EarlierLargeButton { get { return earlierLargeButton; } }

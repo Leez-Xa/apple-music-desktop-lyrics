@@ -66,7 +66,8 @@ namespace AMLyrics {
    public int SelectedIndex;
    public bool SearchedAll;
   }
-  static readonly Regex TimedStampLine = new Regex(@"^\s*\[\d{1,4}:[0-5]?\d(?:[\.:]\d{1,3})?\]", RegexOptions.Compiled);
+  public const int MaxCandidates = 3;
+  static readonly Regex FractionalStampLine = new Regex(@"^\s*\[\d{1,4}:[0-5]?\d[\.:]\d{1,3}\]", RegexOptions.Compiled);
   readonly HttpClient client;
   readonly object gate = new object();
   readonly Dictionary<string,Cached> cache = new Dictionary<string,Cached>();
@@ -117,41 +118,87 @@ namespace AMLyrics {
     throw new HttpRequestException("暂时连接不上歌词服务，请检查网络或稍后重试。", ex);
    } finally { requests.Release(); }
   }
+  sealed class CandidateEntry {
+   public LrclibRecord Record;
+   public bool IsSynced;
+   public int TimedLines;
+   public bool HasFractional;
+   public string Fingerprint;
+  }
   public static List<LrclibRecord> SelectCandidates(IEnumerable<LrclibRecord> candidates, LyricsMetadata metadata) {
    var result = new List<LrclibRecord>();
    if (candidates == null || metadata == null) return result;
    string targetTitle = LyricsMetadata.Normalize(metadata.Title);
    string targetArtist = LyricsMetadata.NormalizeArtist(metadata.Artist);
    string targetAlbum = LyricsMetadata.Normalize(metadata.Album);
-   var filtered = candidates.Where(r => r != null && !r.instrumental &&
-     LyricsMetadata.Normalize(r.trackName) == targetTitle &&
-     LyricsMetadata.NormalizeArtist(r.artistName) == targetArtist &&
-     metadata.Duration > 0 && !double.IsNaN(r.duration) && Math.Abs(r.duration - metadata.Duration) <= 3 &&
-     (!string.IsNullOrWhiteSpace(r.syncedLyrics) || !string.IsNullOrWhiteSpace(r.plainLyrics)))
-    .OrderByDescending(r => !string.IsNullOrWhiteSpace(r.syncedLyrics))
-    .ThenByDescending(r => metadata.Album.Length > 0 && LyricsMetadata.Normalize(r.albumName) == targetAlbum)
-    .ThenBy(r => Math.Abs(r.duration - metadata.Duration))
-    .ThenByDescending(r => CountTimedLines(r.syncedLyrics))
-    .ThenBy(r => r.id > 0 ? r.id : int.MaxValue);
-   var seen = new HashSet<string>(StringComparer.Ordinal);
-   foreach (var record in filtered) {
+   var entries = new List<CandidateEntry>();
+   foreach (var r in candidates) {
+    if (r == null || r.instrumental ||
+     LyricsMetadata.Normalize(r.trackName) != targetTitle ||
+     LyricsMetadata.NormalizeArtist(r.artistName) != targetArtist ||
+     metadata.Duration <= 0 || double.IsNaN(r.duration) || Math.Abs(r.duration - metadata.Duration) > 3 ||
+     (string.IsNullOrWhiteSpace(r.syncedLyrics) && string.IsNullOrWhiteSpace(r.plainLyrics))) continue;
+    string raw = !string.IsNullOrWhiteSpace(r.syncedLyrics) ? r.syncedLyrics : (r.plainLyrics ?? "");
+    var parsed = LrcParser.Parse(raw, "");
+    if (parsed == null || parsed.Lines == null || parsed.Lines.Count == 0) continue;
+    bool isSynced = !string.IsNullOrWhiteSpace(r.syncedLyrics) && parsed.IsSynchronized;
+    entries.Add(new CandidateEntry {
+     Record = r,
+     IsSynced = isSynced,
+     TimedLines = isSynced ? parsed.Lines.Count : 0,
+     HasFractional = isSynced && HasFractionalTimestamps(r.syncedLyrics),
+     Fingerprint = BuildLyricsFingerprint(parsed)
+    });
+   }
+   int bestSyncedLines = entries.Where(e => e.IsSynced).Select(e => e.TimedLines).DefaultIfEmpty(0).Max();
+   int minSyncedLines = bestSyncedLines >= 8 ? Math.Max(4, bestSyncedLines / 4) : 1;
+   var ordered = entries
+    .Where(e => bestSyncedLines > 0 ? (e.IsSynced && e.TimedLines >= minSyncedLines) : true)
+    .OrderByDescending(e => e.IsSynced)
+    .ThenByDescending(e => metadata.Album.Length > 0 && LyricsMetadata.Normalize(e.Record.albumName) == targetAlbum)
+    .ThenBy(e => Math.Abs(e.Record.duration - metadata.Duration))
+    .ThenByDescending(e => e.TimedLines)
+    .ThenByDescending(e => e.HasFractional)
+    .ThenBy(e => e.Record.id > 0 ? e.Record.id : int.MaxValue);
+   var seenIds = new HashSet<string>(StringComparer.Ordinal);
+   var seenContent = new HashSet<string>(StringComparer.Ordinal);
+   foreach (var entry in ordered) {
+    var record = entry.Record;
     string dedupeKey = record.id > 0
      ? "ID:" + record.id.ToString(CultureInfo.InvariantCulture)
      : "RAW:" + (record.albumName ?? "") + "|" + Math.Round(record.duration, 2).ToString(CultureInfo.InvariantCulture) + "|" + (record.syncedLyrics ?? "") + "|" + (record.plainLyrics ?? "");
-    if (seen.Add(dedupeKey)) result.Add(record);
+    if (!seenIds.Add(dedupeKey)) continue;
+    if (entry.Fingerprint.Length > 0 && !seenContent.Add(entry.Fingerprint)) continue;
+    result.Add(record);
+    if (result.Count >= MaxCandidates) break;
    }
    return result;
   }
   public static LrclibRecord SelectRecord(IEnumerable<LrclibRecord> candidates, LyricsMetadata metadata) {
    return SelectCandidates(candidates, metadata).FirstOrDefault();
   }
-  static int CountTimedLines(string syncedLyrics) {
-   if (string.IsNullOrWhiteSpace(syncedLyrics)) return 0;
-   int count = 0;
+  static bool HasFractionalTimestamps(string syncedLyrics) {
+   if (string.IsNullOrWhiteSpace(syncedLyrics)) return false;
    foreach (string line in syncedLyrics.Replace("\r", "").Split('\n')) {
-    if (TimedStampLine.IsMatch(line)) count++;
+    if (FractionalStampLine.IsMatch(line)) return true;
    }
-   return count;
+   return false;
+  }
+  static string BuildLyricsFingerprint(LyricDocument doc) {
+   if (doc == null || doc.Lines == null || doc.Lines.Count == 0) return "";
+   var parts = new List<string>(doc.Lines.Count);
+   foreach (var line in doc.Lines) {
+    if (line == null) continue;
+    string text = (line.Text ?? "").Trim();
+    string trans = (line.Translation ?? "").Trim();
+    string rom = (line.Romanization ?? "").Trim();
+    if (doc.IsSynchronized) {
+     parts.Add(Math.Round(line.TimestampSeconds, 2).ToString("F2", CultureInfo.InvariantCulture) + "|" + text + "|" + trans + "|" + rom);
+    } else if (text.Length > 0) {
+     parts.Add(text);
+    }
+   }
+   return string.Join("\n", parts);
   }
   static List<LrclibRecord> FilterSwitchableCandidates(List<LrclibRecord> ordered) {
    if (ordered == null || ordered.Count == 0) return new List<LrclibRecord>();
@@ -223,13 +270,18 @@ namespace AMLyrics {
     };
    }
   }
-  async Task<List<LrclibRecord>> SearchAllCandidatesAsync(LyricsMetadata metadata, IEnumerable<LrclibRecord> existing, CancellationToken token) {
+  async Task<List<LrclibRecord>> SearchAllCandidatesAsync(LyricsMetadata metadata, IEnumerable<LrclibRecord> existing, CancellationToken token, int preferredId = 0) {
    var serializer = new JavaScriptSerializer { MaxJsonLength = 2 * 1024 * 1024 };
    var collected = new List<LrclibRecord>();
    if (existing != null) collected.AddRange(existing);
    string parameters = "track_name=" + Escape(metadata.Title) + "&artist_name=" + Escape(metadata.Artist);
    string search = await FetchAsync("/api/search?" + parameters, token).ConfigureAwait(false);
    if (search != null) collected.AddRange(serializer.Deserialize<LrclibRecord[]>(search) ?? new LrclibRecord[0]);
+   var primary = FilterSwitchableCandidates(SelectCandidates(collected, metadata));
+   bool hasEnoughSynced = primary.Count >= MaxCandidates &&
+    primary.All(r => r != null && !string.IsNullOrWhiteSpace(r.syncedLyrics)) &&
+    (preferredId <= 0 || primary.Any(r => r != null && r.id == preferredId));
+   if (hasEnoughSynced) return primary;
    string traditional = "track_name=" + Escape(LyricsMetadata.ChineseScript(metadata.Title, true)) + "&artist_name=" + Escape(LyricsMetadata.ChineseScript(metadata.Artist, true));
    if (traditional != parameters) {
     string tradSearch = await FetchAsync("/api/search?" + traditional, token).ConfigureAwait(false);
@@ -260,7 +312,7 @@ namespace AMLyrics {
     }
    }
    if (preferredId > 0 || candidates.Count == 0 || string.IsNullOrWhiteSpace(candidates[0].syncedLyrics)) {
-    candidates = await SearchAllCandidatesAsync(metadata, candidates, token).ConfigureAwait(false);
+    candidates = await SearchAllCandidatesAsync(metadata, candidates, token, preferredId).ConfigureAwait(false);
     searchedAll = true;
    }
    token.ThrowIfCancellationRequested();
@@ -309,13 +361,16 @@ namespace AMLyrics {
     ? existingCandidates[currentIndex]
     : null;
    List<LrclibRecord> candidates = existingCandidates ?? new List<LrclibRecord>();
+   bool matchedExisting = true;
    if (!searchedAll) {
     candidates = await SearchAllCandidatesAsync(metadata, existingCandidates, token).ConfigureAwait(false);
     searchedAll = true;
     if (currentRecord != null && candidates.Count > 0) {
      int matched = candidates.FindIndex(r => RecordsEqual(r, currentRecord));
-     currentIndex = matched >= 0 ? matched : 0;
+     matchedExisting = matched >= 0;
+     currentIndex = matchedExisting ? matched : 0;
     } else {
+     matchedExisting = false;
      currentIndex = 0;
     }
    }
@@ -333,7 +388,7 @@ namespace AMLyrics {
     }
     return null;
    }
-   int nextIndex = candidates.Count > 1 ? (currentIndex + 1) % candidates.Count : 0;
+   int nextIndex = !matchedExisting ? 0 : (candidates.Count > 1 ? (currentIndex + 1) % candidates.Count : 0);
    LrclibRecord nextRecord = candidates[nextIndex];
    LyricDocument nextDoc = BuildDocument(nextRecord, nextIndex, candidates.Count) ?? currentDocument;
    lock (gate) {

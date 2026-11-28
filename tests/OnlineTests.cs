@@ -91,9 +91,42 @@ class OnlineTests {
    var candA = new LrclibRecord { id = 101, trackName = "Original Song", artistName = "Original Artist", albumName = "Original Album", duration = 100, syncedLyrics = "[00:01]Version A" };
    var candB = new LrclibRecord { id = 202, trackName = "Original Song", artistName = "Original Artist", albumName = "Original Album", duration = 100.2, syncedLyrics = "[00:01]Version B\n[00:05]Line two" };
    var candC = new LrclibRecord { id = 303, trackName = "Original Song", artistName = "Original Artist", albumName = "Other Album", duration = 100, syncedLyrics = "[00:01]Version C" };
-   var ranked = LrclibLyricsProvider.SelectCandidates(new[] { candC, candA, candB, candB }, metadata);
+   var candDup = new LrclibRecord { id = 404, trackName = "Original Song", artistName = "Original Artist", albumName = "Other Album", duration = 100.1, syncedLyrics = " [00:01]Version A \r\n" };
+   var candExtra = new LrclibRecord { id = 505, trackName = "Original Song", artistName = "Original Artist", albumName = "Third Album", duration = 100.5, syncedLyrics = "[00:01]Version D" };
+   var ranked = LrclibLyricsProvider.SelectCandidates(new[] { candExtra, candC, candDup, candA, candB, candB }, metadata);
    Check(ranked.Count == 3 && ranked[0].id == 101 && ranked[1].id == 202 && ranked[2].id == 303,
-    "Candidates: deduplicates by id and ranks exact album + closest duration first");
+    "Candidates: caps at top 3, deduplicates by id and lyric content, and ranks exact album + closest duration first");
+   var wholeSec = new LrclibRecord { id = 601, trackName = "Original Song", artistName = "Original Artist", albumName = "Original Album", duration = 100, syncedLyrics = "[00:01]Line 1\n[00:05]Line 2" };
+   var fracSec = new LrclibRecord { id = 602, trackName = "Original Song", artistName = "Original Artist", albumName = "Original Album", duration = 100, syncedLyrics = "[00:01.25]Line 1\n[00:05.50]Line 2" };
+   var precisionRanked = LrclibLyricsProvider.SelectCandidates(new[] { wholeSec, fracSec }, metadata);
+   Check(precisionRanked.Count == 2 && precisionRanked[0].id == 602,
+    "Candidates: prefers fractional-second timestamps over whole-second timestamps on ties");
+   var dupMetaSameContent = new LrclibRecord { id = 610, trackName = "Original Song", artistName = "Original Artist", albumName = "Original Album", duration = 100, syncedLyrics = "[ti:Original Song]\n[by:uploader]\n[00:01.00]Line 1\n[00:05.00]Line 2" };
+   var plainCandidate = new LrclibRecord { id = 611, trackName = "Original Song", artistName = "Original Artist", albumName = "Original Album", duration = 100, plainLyrics = "Line 1\nLine 2" };
+   var truthfullyUnderThree = LrclibLyricsProvider.SelectCandidates(new[] { wholeSec, fracSec, dupMetaSameContent, plainCandidate }, metadata);
+   Check(truthfullyUnderThree.Count == 2 && truthfullyUnderThree[0].id == 602 && truthfullyUnderThree[1].id == 610,
+    "Candidates: collapses LRC header/timestamp-format duplicates and returns 2 versions instead of padding with duplicate or plain text");
+   string fullLines = string.Join("\n", Enumerable.Range(1, 12).Select(i => string.Format("[00:{0:00}.00]Line {1}", i * 3, i)));
+   var fullSynced = new LrclibRecord { id = 620, trackName = "Original Song", artistName = "Original Artist", albumName = "Original Album", duration = 100, syncedLyrics = fullLines };
+   var stubSynced = new LrclibRecord { id = 621, trackName = "Original Song", artistName = "Original Artist", albumName = "Original Album", duration = 100, syncedLyrics = "[00:01.00]Credit only\n[00:05.00]End" };
+   var qualityOnly = LrclibLyricsProvider.SelectCandidates(new[] { fullSynced, stubSynced }, metadata);
+   Check(qualityOnly.Count == 1 && qualityOnly[0].id == 620,
+    "Candidates: rejects short broken stubs when full synced lyrics exist and returns fewer than 3 honestly");
+   handler = new Handler((request, token) => Task.FromResult(
+    request.RequestUri.AbsolutePath == "/api/get"
+     ? new HttpResponseMessage(HttpStatusCode.NotFound)
+     : Json(new[] {
+        new LrclibRecord { id = 701, trackName = "情歌", artistName = "梁静茹", albumName = "静茹＆情歌", duration = 260, syncedLyrics = "[00:01.10]Version 1" },
+        new LrclibRecord { id = 702, trackName = "情歌", artistName = "梁静茹", albumName = "静茹＆情歌", duration = 260.1, syncedLyrics = "[00:01.20]Version 2" },
+        new LrclibRecord { id = 703, trackName = "情歌", artistName = "梁静茹", albumName = "精选", duration = 260, syncedLyrics = "[00:01.30]Version 3" },
+        new LrclibRecord { id = 704, trackName = "情歌", artistName = "梁静茹", albumName = "精选2", duration = 260.4, syncedLyrics = "[00:01.40]Version 4" }
+       })));
+   using (var provider = new LrclibLyricsProvider(handler)) {
+    var topDoc = await provider.GetAsync(new TrackSnapshot { Title = "情歌", Artist = "梁静茹 — 静茹＆情歌", DurationSeconds = 260 }, CancellationToken.None);
+    var topState = provider.ReadCandidateState(new TrackSnapshot { Title = "情歌", Artist = "梁静茹 — 静茹＆情歌", DurationSeconds = 260 });
+    Check(topDoc != null && topDoc.Lines[0].Text == "Version 1" && topState.TotalCount == 3 && handler.Count == 2,
+     "Candidates: skips redundant Traditional /api/search once 3 distinct synced versions are found");
+   }
    handler = new Handler((request, token) => Task.FromResult(
     request.RequestUri.AbsolutePath == "/api/get"
      ? Json(candA)

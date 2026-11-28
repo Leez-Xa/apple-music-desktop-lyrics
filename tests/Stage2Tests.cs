@@ -42,6 +42,7 @@ class Stage2Tests {
     TestHangulAndCrossScriptFusion();
     TestPreferencesStoreRoundtripAndLegacy(tempRoot);
     TestCustomColorPaletteState();
+    TestSettingsPopupPlacement();
     TestStandbyWatcherStopIncludeHost(watchExePath);
    } catch (Exception ex) {
    Console.WriteLine("FAIL Unhandled exception: " + ex);
@@ -77,14 +78,31 @@ class Stage2Tests {
   Near(fit.Overflow, 0, "Layout Method 1: short line has zero overflow");
 
   var clampedFit = LyricsLineLayoutEngine.Layout("Hi", 400, 72, true, measure);
-  Near(clampedFit.FontSize, 48, "Layout Method 1: requested font size clamps at 48 max for fit");
+  Near(clampedFit.FontSize, 60, "Layout Method 1: requested font size clamps at 60 max for fit");
 
   var clampedMarquee = LyricsLineLayoutEngine.Layout(longLine, 400, 72, true, measure);
-  Near(clampedMarquee.FontSize, 48, "Layout Method 1: requested font size clamps at 48 max for marquee");
+  Near(clampedMarquee.FontSize, 60, "Layout Method 1: requested font size clamps at 60 max for marquee");
+
+  double nextMin = LyricsLayoutMetrics.NextLineFontSize(20);
+  Check(nextMin < 20 && nextMin >= LyricsLayoutMetrics.MinimumSecondaryFontSize,
+   "Layout Method 1: NextLineFontSize(20) < 20 and >= MinimumSecondaryFontSize (" + nextMin + ")");
 
   double secondaryThree = LyricsLayoutMetrics.SecondaryThreeTrackFontSize(35);
-  Check(secondaryThree < 35 && secondaryThree >= LyricsLayoutMetrics.MinimumFontSize,
-   "Layout Method 1: SecondaryThreeTrackFontSize(35) < 35 and >= MinimumFontSize (" + secondaryThree + ")");
+  Check(secondaryThree < 35 && secondaryThree >= LyricsLayoutMetrics.MinimumSecondaryFontSize,
+   "Layout Method 1: SecondaryThreeTrackFontSize(35) < 35 and >= MinimumSecondaryFontSize (" + secondaryThree + ")");
+
+  double secondaryMin = LyricsLayoutMetrics.SecondaryThreeTrackFontSize(20);
+  Check(secondaryMin < 20 && secondaryMin >= LyricsLayoutMetrics.MinimumSecondaryFontSize,
+   "Layout Method 1: SecondaryThreeTrackFontSize(20) < 20 and >= MinimumSecondaryFontSize (" + secondaryMin + ")");
+
+  double topGrow = LyricsLayoutMetrics.ComputeVerticalResizeFontSize(30, 100, -40, true);
+  Near(topGrow, 42, "Vertical Resize: dragging top edge upward scales font size proportionally");
+  double topShrink = LyricsLayoutMetrics.ComputeVerticalResizeFontSize(30, 100, 50, true);
+  Near(topShrink, 20, "Vertical Resize: dragging top edge downward clamps at minimum font size 20");
+  double bottomGrow = LyricsLayoutMetrics.ComputeVerticalResizeFontSize(30, 100, 150, false);
+  Near(bottomGrow, 60, "Vertical Resize: dragging bottom edge downward clamps at maximum font size 60");
+  double bottomShrink = LyricsLayoutMetrics.ComputeVerticalResizeFontSize(30, 100, -20, false);
+  Near(bottomShrink, 24, "Vertical Resize: dragging bottom edge upward shrinks font size proportionally");
  }
 
  static void TestLyricsTrackResolver() {
@@ -900,5 +918,29 @@ class Stage2Tests {
     }
    }
   }
+ }
+
+ static void TestSettingsPopupPlacement() {
+  bool belowPreferred = LyricsSettingsPopupPlacement.ShouldPlaceAbove(100, 190, 472, 8, 0, 1040);
+  Check(!belowPreferred, "SettingsPopup: prefers below when bottom work-area space fits popup and gap");
+  var belowPlacements = LyricsSettingsPopupPlacement.ComputePlacements(new System.Windows.Size(432, 472), new System.Windows.Size(760, 90), 8, belowPreferred);
+  Check(belowPlacements.Length == 2 && Math.Abs(belowPlacements[0].Point.X - 164) < 0.1 && Math.Abs(belowPlacements[0].Point.Y - 98) < 0.1 &&
+   Math.Abs(belowPlacements[1].Point.Y - (-480)) < 0.1,
+   "SettingsPopup: primary below placement centers horizontally and preserves gap below target");
+
+  bool abovePreferred = LyricsSettingsPopupPlacement.ShouldPlaceAbove(800, 890, 472, 8, 0, 1040);
+  Check(abovePreferred, "SettingsPopup: flips above when bottom work-area space is insufficient and top space is larger");
+  var abovePlacements = LyricsSettingsPopupPlacement.ComputePlacements(new System.Windows.Size(432, 472), new System.Windows.Size(760, 90), 8, abovePreferred);
+  Check(abovePlacements.Length == 2 && Math.Abs(abovePlacements[0].Point.X - 164) < 0.1 && Math.Abs(abovePlacements[0].Point.Y - (-480)) < 0.1 &&
+   Math.Abs(abovePlacements[1].Point.Y - 98) < 0.1,
+   "SettingsPopup: primary above placement flips completely above target with gap");
+
+  var clearedBelow = LyricsSettingsPopupPlacement.ComputePlacements(new System.Windows.Size(432, 472), new System.Windows.Size(760, 90), 8, false, 34, 0);
+  Check(Math.Abs(clearedBelow[0].Point.Y - (90 + 34 + 8)) < 0.1,
+   "SettingsPopup: below placement offsets cleanly past same-side toolbar clearance");
+
+  var clearedAbove = LyricsSettingsPopupPlacement.ComputePlacements(new System.Windows.Size(432, 472), new System.Windows.Size(760, 90), 8, true, 0, 34);
+  Check(Math.Abs(clearedAbove[0].Point.Y - (-472 - 34 - 8)) < 0.1,
+   "SettingsPopup: above placement offsets cleanly past same-side toolbar clearance");
  }
 }
