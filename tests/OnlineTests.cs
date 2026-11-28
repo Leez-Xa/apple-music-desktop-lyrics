@@ -88,6 +88,51 @@ class OnlineTests {
    try { await provider.GetAsync(Track(), cancel.Token); Check(false, "Cancellation: track switch cancels pending HTTP"); }
    catch (OperationCanceledException) { Check(true, "Cancellation: track switch cancels pending HTTP"); }
   }
+   var candA = new LrclibRecord { id = 101, trackName = "Original Song", artistName = "Original Artist", albumName = "Original Album", duration = 100, syncedLyrics = "[00:01]Version A" };
+   var candB = new LrclibRecord { id = 202, trackName = "Original Song", artistName = "Original Artist", albumName = "Original Album", duration = 100.2, syncedLyrics = "[00:01]Version B\n[00:05]Line two" };
+   var candC = new LrclibRecord { id = 303, trackName = "Original Song", artistName = "Original Artist", albumName = "Other Album", duration = 100, syncedLyrics = "[00:01]Version C" };
+   var ranked = LrclibLyricsProvider.SelectCandidates(new[] { candC, candA, candB, candB }, metadata);
+   Check(ranked.Count == 3 && ranked[0].id == 101 && ranked[1].id == 202 && ranked[2].id == 303,
+    "Candidates: deduplicates by id and ranks exact album + closest duration first");
+   handler = new Handler((request, token) => Task.FromResult(
+    request.RequestUri.AbsolutePath == "/api/get"
+     ? Json(candA)
+     : Json(new[] { candC, candB, candA })));
+   using (var provider = new LrclibLyricsProvider(handler)) {
+    var firstDoc = await provider.GetAsync(Track(), CancellationToken.None);
+    var stateBefore = provider.ReadCandidateState(Track());
+    Check(firstDoc.Lines[0].Text == "Version A" && handler.Count == 1 && !stateBefore.HasSearchedAll && stateBefore.TotalCount == 1,
+     "Candidates: initial GetAsync uses single /api/get request");
+    var secondDoc = await provider.SwitchCandidateAsync(Track(), CancellationToken.None);
+    var stateAfter = provider.ReadCandidateState(Track());
+    Check(secondDoc.Lines[0].Text == "Version B" && stateAfter.HasSearchedAll && stateAfter.TotalCount == 3 && stateAfter.CurrentIndex == 1 && secondDoc.Source.Contains("版本 2/3"),
+     "Candidates: SwitchCandidateAsync lazily loads /api/search and advances to version 2/3");
+    var thirdDoc = await provider.SwitchCandidateAsync(Track(), CancellationToken.None);
+    Check(thirdDoc.Lines[0].Text == "Version C" && thirdDoc.Source.Contains("版本 3/3"),
+     "Candidates: SwitchCandidateAsync cycles to version 3/3");
+    var wrappedDoc = await provider.SwitchCandidateAsync(Track(), CancellationToken.None);
+    Check(wrappedDoc.Lines[0].Text == "Version A" && wrappedDoc.Source.Contains("版本 1/3"),
+     "Candidates: SwitchCandidateAsync wraps around to version 1/3");
+    var savedIds = provider.ReadPreferredIds();
+    Check(savedIds.ContainsKey(Track().Key) && savedIds[Track().Key] == 101,
+     "Candidates: records preferred record id per track");
+    provider.SetPreferredId(Track().Key, 202);
+    provider.Invalidate(Track());
+    var restoredDoc = await provider.GetAsync(Track(), CancellationToken.None);
+    Check(restoredDoc.Lines[0].Text == "Version B" && restoredDoc.Source.Contains("版本 2/3"),
+     "Candidates: preferred record id selects chosen version after cache invalidation or restart");
+   }
+   handler = new Handler((request, token) => Task.FromResult(
+    request.RequestUri.AbsolutePath == "/api/get"
+     ? Json(candA)
+     : Json(new[] { candA })));
+   using (var provider = new LrclibLyricsProvider(handler)) {
+    await provider.GetAsync(Track(), CancellationToken.None);
+    var singleDoc = await provider.SwitchCandidateAsync(Track(), CancellationToken.None);
+    var singleState = provider.ReadCandidateState(Track());
+    Check(singleDoc != null && singleDoc.Lines[0].Text == "Version A" && singleState.HasSearchedAll && singleState.TotalCount == 1,
+     "Candidates: single-candidate track remains stable after SwitchCandidateAsync");
+   }
   handler = new Handler((request, token) => {
    var response = new HttpResponseMessage((HttpStatusCode)429);
    response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(1));

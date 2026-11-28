@@ -55,7 +55,9 @@ namespace AMLyrics {
   string selectedKey = "";
   string notice = "";
   string noticeKey = "";
-  bool importing, closing;
+  string versionNotice = "";
+  string versionNoticeKey = "";
+  bool importing, switchingVersion, closing;
   double lyricSize = LyricsLayoutMetrics.DefaultFontSize;
   int displayedLineIndex = -1;
   IntPtr handle;
@@ -94,7 +96,7 @@ namespace AMLyrics {
    AutomationProperties.SetName(this, "Apple Music 桌面歌词");
 
    overlayChrome = new LyricsOverlayChrome();
-   settingsPanel = new LyricsSettingsPanel(RetryLyrics, () => { var ignored = ImportAsync(); }, (delta) => ChangeTiming(delta, false), () => ChangeTiming(0, true));
+   settingsPanel = new LyricsSettingsPanel(RetryLyrics, () => { var ignored = ImportAsync(); }, (delta) => ChangeTiming(delta, false), () => ChangeTiming(0, true), () => { var ignored = SwitchLyricsVersionAsync(); });
    hitTestBridge = new LyricsHitTestBridge(this);
    overlayChrome.SettingsRequested += (s,e) => OpenSettings();
    overlayChrome.ToggleLockRequested += (s,e) => SetLocked(!overlayChrome.IsLocked);
@@ -157,9 +159,6 @@ namespace AMLyrics {
    Bind(Key.H, ModifierKeys.Control, () => SetEnabled(false)); Bind(Key.OemPlus, ModifierKeys.Control, () => ResizeLyrics(2));
    Bind(Key.Add, ModifierKeys.Control, () => ResizeLyrics(2)); Bind(Key.OemMinus, ModifierKeys.Control, () => ResizeLyrics(-2));
    Bind(Key.Subtract, ModifierKeys.Control, () => ResizeLyrics(-2));
-   Bind(Key.Left, ModifierKeys.Control, () => ChangeTiming(0.2, false));
-   Bind(Key.Right, ModifierKeys.Control, () => ChangeTiming(-0.2, false));
-   Bind(Key.D0, ModifierKeys.Control, () => ChangeTiming(0, true));
    if (!smoke) {
     tray = new Forms.NotifyIcon { Text = "Apple Music 桌面歌词 · 双击显示", Icon = System.Drawing.SystemIcons.Application, Visible = true };
     var menu = new Forms.ContextMenuStrip();
@@ -428,13 +427,18 @@ namespace AMLyrics {
    } catch { return string.Empty; }
   }
   internal LyricsWindowPreferences ReadPreferencesForPersistence() {
-   return new LyricsWindowPreferences { Enabled = userEnabled, Locked = overlayChrome.IsLocked, Width = Width, Left = Left, Top = Top, ScreenDeviceName = CurrentScreenDeviceName(), Display = displaySettings.Clone(), TimingOffsets = timing.ReadOffsets() };
+   return new LyricsWindowPreferences {
+    Enabled = userEnabled, Locked = overlayChrome.IsLocked, Width = Width, Left = Left, Top = Top,
+    ScreenDeviceName = CurrentScreenDeviceName(), Display = displaySettings.Clone(), TimingOffsets = timing.ReadOffsets(),
+    PreferredLrclibIds = online == null ? new System.Collections.Generic.Dictionary<string,int>() : online.ReadPreferredIds()
+   };
   }
   internal void ApplyPreferencesFromPersistence(LyricsWindowPreferences preferences, bool applyVisibility = true) {
    if (preferences == null) return;
    var copy = preferences.Clone(); copy.Normalize();
    userEnabled = copy.Enabled;
    timing.LoadOffsets(copy.TimingOffsets);
+   if (online != null) online.LoadPreferredIds(copy.PreferredLrclibIds);
    Width = copy.Width;
    bool hasLeft = !double.IsNaN(copy.Left);
    bool hasTop = !double.IsNaN(copy.Top);

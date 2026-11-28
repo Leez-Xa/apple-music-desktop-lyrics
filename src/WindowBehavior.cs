@@ -44,9 +44,45 @@ namespace AMLyrics {
   void RetryLyrics() {
    var sample = media.Read();
    if (sample.Track == null || !PlaybackMath.IsFresh(sample, DateTime.UtcNow)) return;
-   notice = ""; attempts = 1; retryAt = DateTime.UtcNow.AddSeconds(30);
+   notice = ""; versionNotice = ""; attempts = 1; retryAt = DateTime.UtcNow.AddSeconds(30);
    if (online != null) online.Invalidate(sample.Track);
    pendingSelection = lyrics.SelectAsync(sample.Track); Refresh();
+  }
+  async Task SwitchLyricsVersionAsync() {
+   if (online == null || switchingVersion || closing) return;
+   var sample = media.Read();
+   if (sample.Track == null || !PlaybackMath.IsFresh(sample, DateTime.UtcNow)) return;
+   var state = lyrics.Read();
+   bool hasLocalOverride = state.Document != null && !string.IsNullOrEmpty(state.Document.Source) && state.Document.Source.StartsWith("本地", StringComparison.Ordinal);
+   if (hasLocalOverride || state.Loading) return;
+   var track = sample.Track;
+   string key = track.Key;
+   switchingVersion = true;
+   versionNotice = "";
+   Refresh();
+   try {
+    var switched = await online.SwitchCandidateAsync(track, CancellationToken.None);
+    if (closing) return;
+    var latest = media.Read();
+    if (latest.Track == null || latest.Track.Key != key || !PlaybackMath.IsFresh(latest, DateTime.UtcNow)) return;
+    var candidateState = online.ReadCandidateState(track);
+    if (candidateState.TotalCount <= 1) {
+     versionNoticeKey = key;
+     versionNotice = "当前歌曲在 LRCLIB 暂无其他可用版本";
+    } else if (switched != null) {
+     if (nativeLyrics != null) nativeLyrics.InvalidateEnrichedCache(key);
+     lyrics.ReplaceDocument(key, switched);
+     SavePreferences();
+    }
+   } catch (Exception ex) {
+    if (!closing) {
+     versionNoticeKey = key;
+     versionNotice = "切换歌词版本失败：" + ex.Message;
+    }
+   } finally {
+    switchingVersion = false;
+    if (!closing) Refresh();
+   }
   }
   void Empty(string heading, string detail, string state) { displayedLineIndex = -1; current.Text = heading; next.Text = detail; third.Text = ""; ApplyTrackLayoutMode(false); currentStatusText = state; currentSourceText = "自动歌词 · LRCLIB"; currentLanguageStatus = string.Empty; }
   void UpdateLanguageStatus(bool hasTrans, bool hasRom, NativeLyricsSnapshot snap) {
@@ -69,12 +105,31 @@ namespace AMLyrics {
    string detail = string.IsNullOrWhiteSpace(currentDetailNotice) ? currentStatusText : currentDetailNotice;
    if (!string.IsNullOrWhiteSpace(hotkeyNotice)) detail = hotkeyNotice + (string.IsNullOrWhiteSpace(detail) ? string.Empty : "；" + detail);
    if (!string.IsNullOrWhiteSpace(configurationNotice)) detail = configurationNotice + (string.IsNullOrWhiteSpace(detail) ? string.Empty : "；" + detail);
-   string timingSummary = currentTimingLabel == "默认" ? "默认（提前 1.5 秒）" : currentTimingLabel + "（基于默认提前 1.5 秒）";
+   string timingSummary = currentTimingLabel == "默认" ? "默认（0.0 秒）" : currentTimingLabel;
+   bool canSwitchVersion = false;
+   string switchVersionLabel = "换一版歌词";
+   bool hasLocalOverride = state.Document != null && !string.IsNullOrEmpty(state.Document.Source) && state.Document.Source.StartsWith("本地", StringComparison.Ordinal);
+   if (online != null && fresh && track != null && !state.Loading && !switchingVersion && !hasLocalOverride) {
+    var candidateState = online.ReadCandidateState(track);
+    if (candidateState.HasSearchedAll && candidateState.TotalCount <= 1) {
+     switchVersionLabel = "暂无其他版本";
+     canSwitchVersion = false;
+    } else if (candidateState.TotalCount > 1) {
+     switchVersionLabel = string.Format("换一版歌词（{0}/{1}）", candidateState.CurrentIndex + 1, candidateState.TotalCount);
+     canSwitchVersion = true;
+    } else if (state.Document != null) {
+     canSwitchVersion = true;
+    }
+   } else if (switchingVersion) {
+    switchVersionLabel = "切换中...";
+   }
    settingsPanel.Apply(displaySettings, currentSourceText, detail, timingSummary,
     fresh && track != null && !state.Loading,
     !importing && fresh && track != null,
     fresh && track != null && state.Document != null && state.Document.IsSynchronized,
-    currentLanguageStatus);
+    currentLanguageStatus,
+    canSwitchVersion,
+    switchVersionLabel);
   }
   internal void Refresh() {
    if (closing) return;
@@ -95,7 +150,7 @@ namespace AMLyrics {
    var track = sample.Track;
    currentTrackHeading = track.Title + (string.IsNullOrWhiteSpace(track.Artist) ? "" : "  /  " + track.Artist);
    if (selectedKey != track.Key || (selectedDuration <= 0 && track.DurationSeconds > 0)) {
-    selectedKey = track.Key; selectedDuration = track.DurationSeconds; notice = "";
+    selectedKey = track.Key; selectedDuration = track.DurationSeconds; notice = ""; versionNotice = "";
     attempts = 1; retryAt = DateTime.UtcNow.AddSeconds(30);
     if (nativeLyrics != null) nativeLyrics.OnTrackChanged(track.Key);
     pendingSelection = lyrics.SelectAsync(track);
@@ -197,10 +252,13 @@ namespace AMLyrics {
    next.Text = resolved.Secondary;
    third.Text = resolved.Tertiary;
    currentStatusText = track.IsPlaying ? "同步中" : "已暂停";
-   double adjustment = offset - LyricTiming.DefaultLeadSeconds;
+   double adjustment = Math.Round(offset - LyricTiming.DefaultLeadSeconds, 1);
    if (Math.Abs(adjustment) > 0.001) {
     string label = (adjustment > 0 ? "提前 " : "延后 ") + Math.Abs(adjustment).ToString("0.0") + " 秒";
     currentTimingLabel = label;
+   }
+   if (!string.IsNullOrWhiteSpace(versionNotice) && versionNoticeKey == track.Key) {
+    currentDetailNotice = versionNotice;
    }
    UpdateLanguageStatus(resolved.HasTranslation, resolved.HasRomanization, nativeLyrics == null ? null : nativeLyrics.ReadSnapshot());
    UpdateSettingsPanel(fresh, track);
@@ -374,7 +432,10 @@ namespace AMLyrics {
   }
   internal async Task SmokeAsync(string folder, Action<bool,string> check) {
    check(Topmost && MinWidth == 420 && MaxWidth == 1400 && MinHeight == 96 && MaxHeight == 220, "Window: topmost and bounded size");
-   check(InputBindings.Count == 11, "Window: keyboard shortcuts registered");
+   bool hasTimingHotkeys = InputBindings.OfType<System.Windows.Input.KeyBinding>().Any(b =>
+    b.Modifiers == System.Windows.Input.ModifierKeys.Control &&
+    (b.Key == System.Windows.Input.Key.Left || b.Key == System.Windows.Input.Key.Right || b.Key == System.Windows.Input.Key.D0));
+   check(InputBindings.Count == 8 && !hasTimingHotkeys, "Window: keyboard shortcuts registered without timing hotkeys");
    check(System.Windows.Automation.AutomationProperties.GetName(settingsPanel).Length > 0, "Window: settings panel has accessible name");
    check(current.Text == "等待 Apple Music", "Window: disconnected state");
    var fake = media as TestMediaSource;
@@ -445,7 +506,11 @@ namespace AMLyrics {
    check(next.Presentation.FontSize < current.Presentation.FontSize, "Window: current and next line retain their font size hierarchy");
    double lyricHeightBeforeSettings = ActualHeight;
    OpenSettings(); UpdateLayout(); SavePreview(Path.Combine(folder, "lyrics-settings-preview.png"));
+   settingsPanel.SectionTabs.SelectedIndex = 1; UpdateLayout(); SavePreview(Path.Combine(folder, "lyrics-settings-lyrics-preview.png"), settingsPanel.PopupSurface);
+   settingsPanel.SectionTabs.SelectedIndex = 2; UpdateLayout(); SavePreview(Path.Combine(folder, "lyrics-settings-sync-preview.png"), settingsPanel.PopupSurface);
+   settingsPanel.SectionTabs.SelectedIndex = 0; UpdateLayout();
    check(settingsPanel.Visibility == Visibility.Visible && settingsPanel.ActualWidth > 0 && settingsPanel.CanImport &&
+    settingsPanel.SwitchVersionButton != null && settingsPanel.EarlierLargeButton != null && settingsPanel.LaterLargeButton != null &&
     Math.Abs(ActualHeight - lyricHeightBeforeSettings) < 0.1, "Window: settings panel is a visible floating layer without changing lyric height");
    CloseSettings();
    overlayChrome.SetHovered(false);
@@ -498,10 +563,24 @@ namespace AMLyrics {
    await lyrics.SelectAsync(fake.Sample.Track);
    ResizeLyrics(-100);
    fake.Sample.Track.IsPlaying = false; fake.Sample.Track.PositionSeconds = 18.4;
-   ChangeTiming(0.2, false);
-   check(displayedLineIndex == 2 && currentTimingLabel == "提前 0.2 秒" && settingsPanel.TimingStatusText.Contains("提前 0.2 秒"), "Window: manual calibration displays only its adjustment from default");
+   ChangeTiming(0.1, false);
+   check(displayedLineIndex == 2 && currentTimingLabel == "提前 0.1 秒" && settingsPanel.TimingStatusText.Contains("提前 0.1 秒") && !settingsPanel.TimingStatusText.Contains("1.5"),
+    "Window: 0.1s calibration displays relative adjustment without exposing internal 1.5s baseline");
+   ChangeTiming(0.5, false);
+   check(currentTimingLabel == "提前 0.6 秒" && settingsPanel.TimingStatusText.Contains("提前 0.6 秒"),
+    "Window: 0.5s calibration stacks cleanly on per-song offset");
+   ChangeTiming(-0.6, false);
+   check(displayedLineIndex == 1 && timing.Read(fake.Sample.Track.Key) == 1.5 && currentTimingLabel == "默认" && settingsPanel.TimingStatusText.Contains("默认（0.0 秒）") && !settingsPanel.TimingStatusText.Contains("1.5"),
+    "Window: adjusting back to zero restores clean default status without 1.5s baseline");
+   ChangeTiming(20, false);
+   check(Math.Abs(timing.ReadRelative(fake.Sample.Track.Key) - 15.0) < 0.001 && currentTimingLabel == "提前 15.0 秒",
+    "Window: per-song calibration clamps positive relative offset at +15.0s");
+   ChangeTiming(-40, false);
+   check(Math.Abs(timing.ReadRelative(fake.Sample.Track.Key) + 15.0) < 0.001 && currentTimingLabel == "延后 15.0 秒",
+    "Window: per-song calibration clamps negative relative offset at -15.0s");
    ChangeTiming(0, true);
-   check(displayedLineIndex == 1 && timing.Read(fake.Sample.Track.Key) == 1.5 && currentTimingLabel == "默认" && settingsPanel.TimingStatusText.Contains("默认"), "Window: reset shows default while retaining the calibrated baseline");
+   check(displayedLineIndex == 1 && timing.Read(fake.Sample.Track.Key) == 1.5 && currentTimingLabel == "默认" && settingsPanel.TimingStatusText.Contains("默认（0.0 秒）"),
+    "Window: reset shows default 0.0s while retaining the internal baseline");
    fake.Sample.TimelineReliable = false; Refresh(); check(current.Text == "时间轴不可用", "Window: missing timeline state");
    fake.Sample.TimelineReliable = true; fake.Sample.Track.IsPlaying = false; Refresh(); check(currentStatusText == "已暂停", "Window: paused state");
    string[] untimedLines = {

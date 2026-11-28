@@ -60,11 +60,15 @@ class CoreTests {
   Near(PlaybackMath.Position(sample, now.AddSeconds(1)), 180, "Clock: duration clamp");
   var timing = new LyricTiming();
   Near(timing.Read("song-a"), 1.5, "Calibration: every song defaults to 1.5 seconds early");
-  Near(timing.Adjust("song-a", 0.2), 1.7, "Calibration: 200ms adjustment builds on the 1.5s default");
+  Near(timing.ReadRelative("song-a"), 0, "Calibration: relative offset defaults to 0.0 seconds");
+  Near(timing.Adjust("song-a", 0.1), 1.6, "Calibration: 100ms adjustment builds on the 1.5s default");
+  Near(timing.ReadRelative("song-a"), 0.1, "Calibration: relative offset reflects +0.1s step");
   Near(timing.Read("song-b"), 1.5, "Calibration: another song retains the global 1.5s default");
-  Near(timing.Adjust("song-a", -0.4), 1.3, "Calibration: negative adjustment reduces the default advance");
-  Near(timing.Adjust("song-a", 100), 5, "Calibration: positive limit");
-  Near(timing.Adjust("song-a", -100), -5, "Calibration: negative limit");
+  Near(timing.Adjust("song-a", -0.5), 1.1, "Calibration: -0.5s adjustment reduces the default advance");
+  Near(timing.Adjust("song-a", 0.4), 1.5, "Calibration: adjusting back to default removes override");
+  Check(timing.ReadOffsets().Count == 0, "Calibration: returning to zero removes song override");
+  Near(timing.Adjust("song-a", 100), 16.5, "Calibration: positive limit (+15.0s relative)");
+  Near(timing.Adjust("song-a", -100), -13.5, "Calibration: negative limit (-15.0s relative)");
   timing.Reset("song-a"); Near(timing.Read("song-a"), 1.5, "Calibration: reset returns to 1.5s default");
   Near(new LyricTiming().Read("song-a"), 1.5, "Calibration: a fresh session retains the 1.5s default");
   sample.Track.IsPlaying = false; sample.Track.PositionSeconds = 10.125;
@@ -90,6 +94,8 @@ class CoreTests {
   }
   using (var session = new LyricSession(new FailingProvider())) {
    await session.SelectAsync(Track("bad")); Check(session.Read().Error == "expected failure", "Requests: provider error is explicit");
+   session.ReplaceDocument("song-x", doc);
+   Check(session.Read().Key == "song-x" && session.Read().Document == doc && !session.Read().Loading, "Session: ReplaceDocument updates document without loading");
   }
   var local = new LocalLyricsProvider(); var track = Track("local"); local.Assign(track.Key, doc);
   Check(await local.GetAsync(track, CancellationToken.None) == doc, "Local: imported lyric assigned to matching track");

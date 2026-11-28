@@ -81,13 +81,15 @@ namespace AMLyrics {
   public string ScreenDeviceName = "";
   public LyricsDisplaySettings Display = new LyricsDisplaySettings();
   public Dictionary<string,double> TimingOffsets = new Dictionary<string,double>();
+  public Dictionary<string,int> PreferredLrclibIds = new Dictionary<string,int>();
 
   public LyricsWindowPreferences Clone() {
    return new LyricsWindowPreferences {
     Enabled = Enabled, Locked = Locked, Width = Width, Left = Left, Top = Top,
     ScreenDeviceName = ScreenDeviceName ?? "",
     Display = Display == null ? new LyricsDisplaySettings() : Display.Clone(),
-    TimingOffsets = TimingOffsets == null ? new Dictionary<string,double>() : new Dictionary<string,double>(TimingOffsets)
+    TimingOffsets = TimingOffsets == null ? new Dictionary<string,double>() : new Dictionary<string,double>(TimingOffsets),
+    PreferredLrclibIds = NormalizePreferredLrclibIds(PreferredLrclibIds)
    };
   }
 
@@ -96,6 +98,18 @@ namespace AMLyrics {
    if (Display == null) Display = new LyricsDisplaySettings();
    Display.Normalize();
    TimingOffsets = LyricTiming.NormalizeOffsets(TimingOffsets);
+   PreferredLrclibIds = NormalizePreferredLrclibIds(PreferredLrclibIds);
+  }
+
+  public static Dictionary<string,int> NormalizePreferredLrclibIds(IDictionary<string,int> values) {
+   var normalized = new Dictionary<string,int>();
+   if (values == null) return normalized;
+   foreach (var entry in values) {
+    if (!string.IsNullOrWhiteSpace(entry.Key) && entry.Value > 0) {
+     normalized[entry.Key] = entry.Value;
+    }
+   }
+   return normalized;
   }
  }
 

@@ -52,5 +52,19 @@ $launcherArguments += $launcherSource
 & $compiler @launcherArguments
 if ($LASTEXITCODE -ne 0) { throw 'Standby launcher compilation failed.' }
 
+$startSource = Join-Path (Join-Path $root 'src') 'StartLauncher.cs'
+if (-not (Test-Path -LiteralPath $startSource -PathType Leaf)) { throw "Missing start launcher source file: $startSource" }
+$startBuiltExe = Join-Path $OutputDirectory 'Start.exe'
+$startArguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/warn:4','/utf8output',('/out:' + $startBuiltExe))
+foreach ($reference in @('System.dll','System.Core.dll','System.Windows.Forms.dll')) {
+ $startArguments += '/reference:' + (Join-Path $framework $reference)
+}
+$startArguments += $startSource
+& $compiler @startArguments
+if ($LASTEXITCODE -ne 0) { throw 'Start launcher compilation failed.' }
+
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'MediaSession.ps1') -Destination (Join-Path $OutputDirectory 'MediaSession.ps1') -ErrorAction Stop
+try {
+ Copy-Item -LiteralPath $startBuiltExe -Destination (Join-Path $root 'Start.exe') -Force -ErrorAction Stop
+} catch { }
 Write-Output $OutputDirectory

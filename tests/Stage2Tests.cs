@@ -560,9 +560,12 @@ class Stage2Tests {
   prefs.Display.ShowRomanization = true;
   prefs.Display.FontSize = 35;
   prefs.Display.CustomColors = new[] { 0x00AA55FF, 0x00112233 };
+  prefs.TimingOffsets["track-wide-neg"] = -12.5;
+  prefs.TimingOffsets["track-wide-pos"] = 14.0;
+  prefs.PreferredLrclibIds["track-wide-neg"] = 456789;
 
   var saveRes = store.Save(prefs);
-  Check(saveRes.Succeeded, "PreferencesStore: saves ShowTranslation=true, ShowRomanization=true, and CustomColors");
+  Check(saveRes.Succeeded, "PreferencesStore: saves ShowTranslation=true, ShowRomanization=true, wide TimingOffsets, PreferredLrclibIds, and CustomColors");
 
   var reloadStore = new LyricsPreferencesStore(prefPath);
   var loadRes = reloadStore.Load();
@@ -570,12 +573,19 @@ class Stage2Tests {
         loadRes.Preferences.Display.ShowTranslation &&
         loadRes.Preferences.Display.ShowRomanization &&
         Math.Abs(loadRes.Preferences.Display.FontSize - 35) < 0.0001 &&
+        loadRes.Preferences.TimingOffsets.ContainsKey("track-wide-neg") &&
+        Math.Abs(loadRes.Preferences.TimingOffsets["track-wide-neg"] - (-12.5)) < 0.0001 &&
+        loadRes.Preferences.TimingOffsets.ContainsKey("track-wide-pos") &&
+        Math.Abs(loadRes.Preferences.TimingOffsets["track-wide-pos"] - 14.0) < 0.0001 &&
+        loadRes.Preferences.PreferredLrclibIds != null &&
+        loadRes.Preferences.PreferredLrclibIds.ContainsKey("track-wide-neg") &&
+        loadRes.Preferences.PreferredLrclibIds["track-wide-neg"] == 456789 &&
         loadRes.Preferences.Display.CustomColors != null &&
         loadRes.Preferences.Display.CustomColors.Length == 16 &&
         loadRes.Preferences.Display.CustomColors[0] == 0x00AA55FF &&
         loadRes.Preferences.Display.CustomColors[1] == 0x00112233 &&
         loadRes.Preferences.Display.CustomColors[15] == 0x00FFFFFF,
-   "PreferencesStore: round-trip preserves ShowTranslation=true, ShowRomanization=true, FontSize=35, CustomColors");
+   "PreferencesStore: round-trip preserves ShowTranslation, ShowRomanization, wide TimingOffsets, PreferredLrclibIds, FontSize, CustomColors");
 
   string legacyPath = Path.Combine(tempRoot, "legacy-v1-prefs.json");
   string legacyJson = "{\"Version\":1,\"Enabled\":true,\"Locked\":false,\"Width\":800,\"Display\":{\"FontSize\":32,\"ForegroundHex\":\"#FFFFFF\",\"FontFamilyName\":\"Segoe UI\",\"FontWeightName\":\"常规\",\"StrokeHex\":\"#0F0F12\",\"BackgroundOpacity\":0.2,\"StrokeEnabled\":true,\"ShadowEnabled\":true,\"AnimateLongLines\":true}}";
@@ -589,9 +599,11 @@ class Stage2Tests {
         Math.Abs(legacyRes.Preferences.Display.FontSize - 32) < 0.0001 &&
         !legacyRes.Preferences.Display.ShowTranslation &&
         !legacyRes.Preferences.Display.ShowRomanization &&
+        legacyRes.Preferences.PreferredLrclibIds != null &&
+        legacyRes.Preferences.PreferredLrclibIds.Count == 0 &&
         legacyRes.Preferences.Display.CustomColors != null &&
         legacyRes.Preferences.Display.CustomColors.Length == 0,
-   "PreferencesStore: loads legacy Version 1 JSON omitting ShowTranslation/ShowRomanization/CustomColors");
+   "PreferencesStore: loads legacy Version 1 JSON omitting ShowTranslation/ShowRomanization/PreferredLrclibIds/CustomColors");
  }
 
  static void TestCustomColorPaletteState() {

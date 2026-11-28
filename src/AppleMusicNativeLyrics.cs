@@ -617,6 +617,13 @@ namespace AMLyrics {
    }
   }
 
+  public void InvalidateEnrichedCache(string trackKey) {
+   if (string.IsNullOrEmpty(trackKey)) return;
+   lock (gate) {
+    enrichedCache.Remove(trackKey);
+   }
+  }
+
   static bool CachedHasTranslation(LyricDocument doc) {
    if (doc == null || doc.Lines == null) return false;
    for (int i = 0; i < doc.Lines.Count; i++) {

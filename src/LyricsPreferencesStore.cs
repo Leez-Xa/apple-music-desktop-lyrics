@@ -212,6 +212,9 @@ namespace AMLyrics {
     ScreenDeviceName = preferences.ScreenDeviceName ?? "",
     Width = FiniteOrDefault(preferences.Width, LyricsWindowPreferences.DefaultWidth),
     TimingOffsets = preferences.TimingOffsets.Count == 0 ? null : preferences.TimingOffsets,
+    PreferredLrclibIds = preferences.PreferredLrclibIds == null || preferences.PreferredLrclibIds.Count == 0
+     ? null
+     : LyricsWindowPreferences.NormalizePreferredLrclibIds(preferences.PreferredLrclibIds),
     Display = new PersistedDisplaySettings {
      FontSize = FiniteOrDefault(display.FontSize, 30),
      ForegroundHex = display.ForegroundHex ?? "#FFF7FA",
@@ -239,6 +242,7 @@ namespace AMLyrics {
     ScreenDeviceName = persisted.ScreenDeviceName ?? "",
     Width = FiniteOrDefault(persisted.Width, LyricsWindowPreferences.DefaultWidth),
     TimingOffsets = persisted.TimingOffsets,
+    PreferredLrclibIds = LyricsWindowPreferences.NormalizePreferredLrclibIds(persisted.PreferredLrclibIds),
     Display = new LyricsDisplaySettings {
      FontSize = FiniteOrDefault(display.FontSize, 30),
      ForegroundHex = String.IsNullOrWhiteSpace(display.ForegroundHex) ? "#FFF7FA" : display.ForegroundHex,
@@ -280,6 +284,7 @@ namespace AMLyrics {
    public double? Width { get; set; }
    public PersistedDisplaySettings Display { get; set; }
    public Dictionary<string,double> TimingOffsets { get; set; }
+   public Dictionary<string,int> PreferredLrclibIds { get; set; }
   }
 
   public sealed class PersistedDisplaySettings {

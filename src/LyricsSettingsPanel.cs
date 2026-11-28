@@ -43,10 +43,13 @@ namespace AMLyrics {
   readonly TextBlock sourceText;
   readonly TextBlock detailText;
   readonly Button retryButton;
+  readonly Button switchVersionButton;
   readonly Button importButton;
   readonly TextBlock timingStatusText;
-  readonly Button earlierButton;
-  readonly Button laterButton;
+  readonly Button earlierLargeButton;
+  readonly Button earlierSmallButton;
+  readonly Button laterSmallButton;
+  readonly Button laterLargeButton;
   readonly Button resetTimingButton;
   readonly CheckBox translationCheckBox;
   readonly CheckBox romanizationCheckBox;
@@ -55,6 +58,7 @@ namespace AMLyrics {
   readonly Action import;
   readonly Action<double> adjustTiming;
   readonly Action resetTiming;
+  readonly Action switchVersion;
   bool applyingAppearance;
   bool colorDialogOpen;
 
@@ -64,8 +68,8 @@ namespace AMLyrics {
   internal Func<Forms.IWin32Window, DrawingColor, int[], Tuple<DrawingColor?, int[]>> CustomColorDialogPicker { get; set; }
   internal int[] CustomColors { get { return LyricsDisplaySettings.NormalizeCustomColors(customColors); } }
 
-  public LyricsSettingsPanel(Action retry, Action import, Action<double> adjustTiming, Action resetTiming) {
-   this.retry = retry; this.import = import; this.adjustTiming = adjustTiming; this.resetTiming = resetTiming;
+  public LyricsSettingsPanel(Action retry, Action import, Action<double> adjustTiming, Action resetTiming, Action switchVersion = null) {
+   this.retry = retry; this.import = import; this.adjustTiming = adjustTiming; this.resetTiming = resetTiming; this.switchVersion = switchVersion;
    Background = Brushes.Transparent;
    BorderThickness = new Thickness(0); Padding = new Thickness(0);
    Width = 432; MinWidth = 432; MaxWidth = 432; Height = 472; MinHeight = 472; MaxHeight = 472;
@@ -133,8 +137,9 @@ namespace AMLyrics {
    lyricsGroup.Children.Add(sourceText); lyricsGroup.Children.Add(detailText);
    StackPanel lyricsButtons = new StackPanel { Orientation = Orientation.Horizontal };
    retryButton = MakeButton("重试", "重新获取歌词", delegate { if (retry != null) retry(); });
+   switchVersionButton = MakeButton("换一版歌词", "切换当前歌曲的其他 LRCLIB 歌词版本", delegate { if (this.switchVersion != null) this.switchVersion(); });
    importButton = MakeButton("本地备用", "导入本地 LRC 或 TXT 歌词", delegate { if (import != null) import(); });
-   lyricsButtons.Children.Add(retryButton); lyricsButtons.Children.Add(importButton); lyricsGroup.Children.Add(lyricsButtons);
+   lyricsButtons.Children.Add(retryButton); lyricsButtons.Children.Add(switchVersionButton); lyricsButtons.Children.Add(importButton); lyricsGroup.Children.Add(lyricsButtons);
    translationCheckBox = AddCheckBox(lyricsGroup, "显示翻译", false, "显示歌词翻译");
    romanizationCheckBox = AddCheckBox(lyricsGroup, "显示音译", false, "显示歌词音译");
    languageAvailabilityText = new TextBlock {
@@ -148,16 +153,29 @@ namespace AMLyrics {
 
    syncGroup = AddGroup("同步");
    timingStatusText = new TextBlock {
-    Text = "当前歌曲校时：默认（提前 1.5 秒）",
+    Text = "当前歌曲校时：默认（0.0 秒）",
     Foreground = new SolidColorBrush(Color.FromRgb(88, 91, 101)),
     TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8)
    };
    AutomationProperties.SetName(timingStatusText, "当前歌曲校时状态");
    syncGroup.Children.Add(timingStatusText);
-   earlierButton = MakeButton("提前 0.2 秒", "歌词提前 0.2 秒", delegate { if (adjustTiming != null) adjustTiming(0.2); });
-   laterButton = MakeButton("延后 0.2 秒", "歌词延后 0.2 秒", delegate { if (adjustTiming != null) adjustTiming(-0.2); });
-   resetTimingButton = MakeButton("恢复默认", "恢复默认提前 1.5 秒", delegate { if (resetTiming != null) resetTiming(); });
-   syncGroup.Children.Add(earlierButton); syncGroup.Children.Add(laterButton); syncGroup.Children.Add(resetTimingButton);
+   StackPanel earlierRow = new StackPanel { Orientation = Orientation.Horizontal };
+   earlierLargeButton = MakeButton("提前 0.5 秒", "当前歌曲歌词提前 0.5 秒", delegate { if (adjustTiming != null) adjustTiming(0.5); });
+   earlierSmallButton = MakeButton("提前 0.1 秒", "当前歌曲歌词提前 0.1 秒", delegate { if (adjustTiming != null) adjustTiming(0.1); });
+   earlierRow.Children.Add(earlierSmallButton); earlierRow.Children.Add(earlierLargeButton);
+   StackPanel laterRow = new StackPanel { Orientation = Orientation.Horizontal };
+   laterSmallButton = MakeButton("延后 0.1 秒", "当前歌曲歌词延后 0.1 秒", delegate { if (adjustTiming != null) adjustTiming(-0.1); });
+   laterLargeButton = MakeButton("延后 0.5 秒", "当前歌曲歌词延后 0.5 秒", delegate { if (adjustTiming != null) adjustTiming(-0.5); });
+   laterRow.Children.Add(laterSmallButton); laterRow.Children.Add(laterLargeButton);
+   StackPanel resetRow = new StackPanel { Orientation = Orientation.Horizontal };
+   resetTimingButton = MakeButton("恢复默认", "恢复当前歌曲默认校时", delegate { if (resetTiming != null) resetTiming(); });
+   resetRow.Children.Add(resetTimingButton);
+   TextBlock syncHint = new TextBlock {
+    Text = "仅对当前歌曲生效（范围 ±15 秒，自动保存）",
+    Foreground = new SolidColorBrush(Color.FromRgb(88, 91, 101)),
+    FontSize = 11.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0)
+   };
+   syncGroup.Children.Add(earlierRow); syncGroup.Children.Add(laterRow); syncGroup.Children.Add(resetRow); syncGroup.Children.Add(syncHint);
    sectionTabs.Items.Add(new TabItem { Header = "显示", Content = displayGroup, ToolTip = "显示设置" });
    sectionTabs.Items.Add(new TabItem { Header = "歌词", Content = lyricsGroup, ToolTip = "歌词来源和状态" });
    sectionTabs.Items.Add(new TabItem { Header = "同步", Content = syncGroup, ToolTip = "歌词同步设置" });
@@ -182,6 +200,14 @@ namespace AMLyrics {
   public string LanguageStatusText { get { return languageAvailabilityText.Text; } }
   public TextBox ForegroundColorBox { get { return foregroundColor.Box; } }
   public TextBox StrokeColorBox { get { return strokeColor.Box; } }
+  internal Border PopupSurface { get { return surface; } }
+  internal TabControl SectionTabs { get { return sectionTabs; } }
+  internal Button SwitchVersionButton { get { return switchVersionButton; } }
+  internal Button EarlierLargeButton { get { return earlierLargeButton; } }
+  internal Button EarlierSmallButton { get { return earlierSmallButton; } }
+  internal Button LaterSmallButton { get { return laterSmallButton; } }
+  internal Button LaterLargeButton { get { return laterLargeButton; } }
+  internal Button ResetTimingButton { get { return resetTimingButton; } }
 
   public LyricsDisplaySettings ReadAppearance() {
    LyricsDisplaySettings result = new LyricsDisplaySettings {
@@ -201,15 +227,19 @@ namespace AMLyrics {
    result.Normalize(); return result;
   }
 
-  public void Apply(LyricsDisplaySettings settings, string source, string detail, string timingSummary, bool canRetry, bool canImport, bool canAdjustTiming, string languageStatus = null) {
+  public void Apply(LyricsDisplaySettings settings, string source, string detail, string timingSummary, bool canRetry, bool canImport, bool canAdjustTiming, string languageStatus = null, bool canSwitchVersion = false, string switchVersionLabel = null) {
    settings = settings == null ? new LyricsDisplaySettings() : settings.Clone(); settings.Normalize();
    if (!colorDialogOpen && !IsKeyboardFocusWithin && !surface.IsKeyboardFocusWithin) ApplyAppearance(settings);
    sourceText.Text = string.IsNullOrWhiteSpace(source) ? "歌词来源：未选择" : "歌词来源：" + source;
    detailText.Text = string.IsNullOrWhiteSpace(detail) ? "状态：暂无详细信息" : detail;
-   timingStatusText.Text = string.IsNullOrWhiteSpace(timingSummary) ? "当前歌曲校时：默认（提前 1.5 秒）" : "当前歌曲校时：" + timingSummary;
+   timingStatusText.Text = string.IsNullOrWhiteSpace(timingSummary) ? "当前歌曲校时：默认（0.0 秒）" : "当前歌曲校时：" + timingSummary;
    languageAvailabilityText.Text = string.IsNullOrWhiteSpace(languageStatus) ? "翻译/音译：随 Apple Music 原生歌词或双语 LRC 自动识别" : languageStatus;
    retryButton.IsEnabled = canRetry; importButton.IsEnabled = canImport;
-   earlierButton.IsEnabled = canAdjustTiming; laterButton.IsEnabled = canAdjustTiming; resetTimingButton.IsEnabled = canAdjustTiming;
+   switchVersionButton.IsEnabled = canSwitchVersion;
+   switchVersionButton.Content = string.IsNullOrWhiteSpace(switchVersionLabel) ? "换一版歌词" : switchVersionLabel;
+   earlierLargeButton.IsEnabled = canAdjustTiming; earlierSmallButton.IsEnabled = canAdjustTiming;
+   laterSmallButton.IsEnabled = canAdjustTiming; laterLargeButton.IsEnabled = canAdjustTiming;
+   resetTimingButton.IsEnabled = canAdjustTiming;
   }
 
   public void ApplyAppearance(LyricsDisplaySettings appearance) {

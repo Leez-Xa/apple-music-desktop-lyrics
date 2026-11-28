@@ -47,12 +47,20 @@ namespace AMLyrics {
  }
  public sealed class LyricTiming {
   public const double DefaultLeadSeconds = 1.5;
+  public const double MaxRelativeOffsetSeconds = 15.0;
+  public const double MinOffsetSeconds = DefaultLeadSeconds - MaxRelativeOffsetSeconds;
+  public const double MaxOffsetSeconds = DefaultLeadSeconds + MaxRelativeOffsetSeconds;
   Dictionary<string,double> offsets = new Dictionary<string,double>();
   public double Read(string key) { double value; return key != null && offsets.TryGetValue(key, out value) ? value : DefaultLeadSeconds; }
+  public double ReadRelative(string key) { return Math.Round(Read(key) - DefaultLeadSeconds, 1); }
   public double Adjust(string key, double delta) {
    double previous = Read(key);
    if (string.IsNullOrWhiteSpace(key) || !IsFinite(delta)) return previous;
    double value = Math.Round(ClampOffset(previous + delta), 1);
+   if (Math.Abs(value - DefaultLeadSeconds) < 0.001) {
+    offsets.Remove(key);
+    return DefaultLeadSeconds;
+   }
    offsets[key] = value; return value;
   }
   public void Reset(string key) { if (key != null) offsets.Remove(key); }
@@ -67,7 +75,7 @@ namespace AMLyrics {
    return normalized;
   }
   static bool IsFinite(double value) { return !double.IsNaN(value) && !double.IsInfinity(value); }
-  static double ClampOffset(double value) { return Math.Max(-5, Math.Min(5, value)); }
+  static double ClampOffset(double value) { return Math.Max(MinOffsetSeconds, Math.Min(MaxOffsetSeconds, value)); }
   public static double Position(MediaSample sample, DateTime now, double offset) {
    // Positive offset means show each lyric earlier; negative allows a delayed first line/prelude.
    return PlaybackMath.Position(sample, now) + ClampOffset(offset);
@@ -195,6 +203,13 @@ namespace AMLyrics {
   public LyricState Read() { lock (gate) return state; }
   public void Clear() {
    lock (gate) { generation++; if (request != null) request.Cancel(); state = new LyricState(); }
+  }
+  public void ReplaceDocument(string trackKey, LyricDocument document) {
+   lock (gate) {
+    generation++;
+    if (request != null) request.Cancel();
+    state = new LyricState { Key = trackKey ?? "", Document = document };
+   }
   }
   public async Task SelectAsync(TrackSnapshot track) {
    CancellationTokenSource current;

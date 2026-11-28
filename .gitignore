@@ -1,6 +1,7 @@
 # Generated builds, captures and downloaded lyric content
 outputs/
 work/
+/Start.exe
 bin/
 obj/
 .vs/
